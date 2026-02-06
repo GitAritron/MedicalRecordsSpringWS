@@ -1,4 +1,4 @@
-package com.f106317.MedicalRecordProject2024.Data.Entity;
+package com.f106317.MedicalRecordsSpringWS.Data.Entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.JoinColumn;
@@ -10,12 +10,12 @@ import lombok.Setter;
 @Entity
 @Getter
 @Setter
-public class Prescription extends BaseEntity {
+public class Diagnosis extends BaseEntity {
 
-@ManyToOne
-@JoinColumn(name = "visit_id")
-Visit visit;
+    @ManyToOne
+    @JoinColumn(name = "visit_id")
+    Visit visit;
 
-String note;
+    String name;
 
 }

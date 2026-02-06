@@ -1,1 +1,1 @@
-rootProject.name = "MedicalRecordProject2024"
+rootProject.name = "MedicalRecordsSpringWS"

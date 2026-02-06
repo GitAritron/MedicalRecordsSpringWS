@@ -1,13 +1,13 @@
-package com.f106317.MedicalRecordProject2024;
+package com.f106317.MedicalRecordsSpringWS;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class MedicalRecordProject2024Application {
+public class MedicalRecordsSpringWSApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(MedicalRecordProject2024Application.class, args);
+		SpringApplication.run(MedicalRecordsSpringWSApplication.class, args);
 	}
 
 }

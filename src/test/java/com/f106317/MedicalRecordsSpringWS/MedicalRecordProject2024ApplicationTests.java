@@ -1,10 +1,10 @@
-package com.f106317.MedicalRecordProject2024;
+package com.f106317.MedicalRecordsSpringWS;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class MedicalRecordProject2024ApplicationTests {
+class MedicalRecordsSpringWSApplicationTests {
 
 	@Test
 	void contextLoads() {

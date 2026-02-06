@@ -1,4 +1,4 @@
-package com.f106317.MedicalRecordProject2024.Data.Entity;
+package com.f106317.MedicalRecordsSpringWS.Data.Entity;
 
 import com.fasterxml.jackson.databind.ser.Serializers;
 import jakarta.persistence.Entity;
