@@ -1,0 +1,33 @@
+package com.f106317.MedicalRecordsSpringWS.DTO;
+
+import com.f106317.MedicalRecordsSpringWS.Data.Entity.Patient;
+
+public record PatientResponse(
+        Long id,
+        String keycloakId,
+        String egn,
+        String firstName,
+        String lastName,
+        Long gpDoctorId,
+        String gpDoctorName
+) {
+    public PatientResponse(Long id, String egn, String firstName, String lastName, Long gpDoctorId, String gpDoctorName) {
+        this(id, null, egn, firstName, lastName, gpDoctorId, gpDoctorName);
+    }
+
+    public static PatientResponse fromEntity(Patient patient) {
+        Long gpId = patient.getGp() != null ? patient.getGp().getId() : null;
+        String gpName = patient.getGp() != null
+                ? "Dr. " + patient.getGp().getFirstName() + " " + patient.getGp().getLastName()
+                : null;
+        return new PatientResponse(
+                patient.getId(),
+                patient.getKeycloakId(),
+                patient.getEgn(),
+                patient.getFirstName(),
+                patient.getLastName(),
+                gpId,
+                gpName
+        );
+    }
+}

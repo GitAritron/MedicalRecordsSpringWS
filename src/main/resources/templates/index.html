@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Records System</title>
+    <link rel="stylesheet" th:href="@{/style.css}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="http://localhost:8081/js/keycloak.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="logo">MedicalRecords</div>
+            <div class="user-info">
+                <span id="username" class="role-badge">Not logged in</span>
+                <button id="logoutBtn" style="display: none;" class="btn btn-secondary" onclick="logout()">Logout</button>
+                <button id="registerBtn" class="btn btn-secondary" onclick="register()">Register</button>
+                <button id="loginBtn" class="btn btn-primary" onclick="login()">Login</button>
+            </div>
+        </header>
+        <main>
+            <section id="hero" class="glass-panel">
+                <h1>Welcome to Medical Records</h1>
+                <p>Your centralized healthcare management portal.</p>
+
+            </section>
+            
+            <section id="dashboard" class="glass-panel" style="display: none;">
+                <div class="dashboard-header">
+                    <h2>Dashboard</h2>
+                    <div class="filter-bar">
+                        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search / Filter..." onkeyup="filterTable()">
+                    </div>
+                    <div id="nav-tabs" class="tabs">
+                        <!-- Tabs will be injected here by JS -->
+                    </div>
+                </div>
+                <div id="content-area">
+                    <!-- Dynamic content will be loaded here based on role and tab -->
+                </div>
+            </section>
+        </main>
+        
+        <!-- Modals for CRUD -->
+        <dialog id="patientModal" class="crud-modal">
+            <form id="patientForm" method="dialog" onsubmit="submitPatientForm(event)">
+                <h3 id="patientModalTitle">Add/Edit Patient</h3>
+                <input type="hidden" id="patientId">
+                <input type="hidden" id="patientKeycloakId">
+                <div class="form-group">
+                    <label>First Name:</label>
+                    <input type="text" id="patientFirstName" required>
+                </div>
+                <div class="form-group">
+                    <label>Last Name:</label>
+                    <input type="text" id="patientLastName" required>
+                </div>
+                <div class="form-group">
+                    <label>EGN:</label>
+                    <input type="text" id="patientEgn" required pattern="\d{10}" title="Must be exactly 10 digits">
+                </div>
+                <div class="form-group">
+                    <label>GP Doctor (Optional):</label>
+                    <select id="patientGpId">
+                        <option value="">-- No GP Assigned --</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('patientModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="doctorModal" class="crud-modal">
+            <form id="doctorForm" method="dialog" onsubmit="submitDoctorForm(event)">
+                <h3 id="doctorModalTitle">Add/Edit Doctor</h3>
+                <input type="hidden" id="doctorId">
+                <input type="hidden" id="doctorKeycloakId">
+                <div class="form-group">
+                    <label>First Name:</label>
+                    <input type="text" id="doctorFirstName" required>
+                </div>
+                <div class="form-group">
+                    <label>Last Name:</label>
+                    <input type="text" id="doctorLastName" required>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                    <label style="margin-bottom: 0;">Is General Practitioner (GP)?:</label>
+                    <input type="checkbox" id="doctorIsGp" style="width: auto;">
+                </div>
+                <div class="form-group">
+                    <label>Specializations:</label>
+                    <div id="doctorSpecsContainer" class="checkbox-group">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('doctorModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="specModal" class="crud-modal">
+            <form id="specForm" method="dialog" onsubmit="submitSpecForm(event)">
+                <h3>Add New Specialization</h3>
+                <div id="specMsg"></div>
+                <div class="form-group">
+                    <label>Specialization Name:</label>
+                    <input type="text" id="specName" placeholder="e.g. Neurology, Dermatology" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('specModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="visitModal" class="crud-modal" style="max-width: 650px;">
+            <form id="visitForm" method="dialog" onsubmit="submitVisitForm(event)">
+                <h3 id="visitModalTitle">Add/Edit Visit</h3>
+                <input type="hidden" id="visitId">
+                <div id="visitBasicFields">
+                    <div class="form-group">
+                        <label>Patient:</label>
+                        <select id="visitPatientId" required>
+                            <option value="">-- Select Patient --</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="visitDoctorGroup">
+                        <label>Doctor:</label>
+                        <select id="visitDoctorId">
+                            <option value="">-- Select Doctor --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Date:</label>
+                        <input type="date" id="visitDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Time:</label>
+                        <input type="time" id="visitTime" required>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('visitModal')">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="visitSaveBtn">Save Visit</button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Clinical Data Section (shown after visit is saved) -->
+            <div id="clinicalDataSection" style="display: none; border-top: 1px solid #334155; margin-top: 1rem; padding-top: 1rem;">
+                <h4 style="color: #38BDF8; margin-bottom: 1rem;">📋 Clinical Data</h4>
+
+                <!-- Diagnoses -->
+                <div style="margin-bottom: 1.25rem;">
+                    <label style="color: #94A3B8; font-weight: 600; font-size: 0.88rem;">Diagnoses:</label>
+                    <div id="diagnosisList" style="margin: 0.5rem 0;"></div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="newDiagnosisName" placeholder="Enter diagnosis name..." style="flex: 1;">
+                        <button type="button" class="btn btn-primary" style="padding: 0.4rem 1rem; white-space: nowrap;" onclick="addDiagnosisToVisit()">+ Add</button>
+                    </div>
+                </div>
+
+                <!-- Prescriptions -->
+                <div style="margin-bottom: 1.25rem;">
+                    <label style="color: #94A3B8; font-weight: 600; font-size: 0.88rem;">Prescriptions:</label>
+                    <div id="prescriptionList" style="margin: 0.5rem 0;"></div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="newPrescriptionNote" placeholder="Enter prescription..." style="flex: 1;">
+                        <button type="button" class="btn btn-primary" style="padding: 0.4rem 1rem; white-space: nowrap;" onclick="addPrescriptionToVisit()">+ Add</button>
+                    </div>
+                </div>
+
+                <!-- Sick Leave -->
+                <div style="margin-bottom: 1.25rem;">
+                    <label style="color: #94A3B8; font-weight: 600; font-size: 0.88rem;">Sick Leave:</label>
+                    <div id="sickLeaveDisplay" style="margin: 0.5rem 0;"></div>
+                    <div id="sickLeaveForm" style="display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 140px;">
+                            <label style="font-size: 0.8rem; color: #64748B;">Valid From:</label>
+                            <input type="date" id="newSickLeaveFrom">
+                        </div>
+                        <div style="flex: 0 0 100px;">
+                            <label style="font-size: 0.8rem; color: #64748B;">Days:</label>
+                            <input type="number" id="newSickLeaveDays" min="1" max="365" placeholder="Days">
+                        </div>
+                        <button type="button" class="btn btn-primary" style="padding: 0.4rem 1rem; white-space: nowrap;" onclick="addSickLeaveToVisit()">+ Issue</button>
+                    </div>
+                </div>
+
+                <div class="modal-actions" style="margin-top: 1rem;">
+                    <button type="button" class="btn btn-primary" onclick="closeModal('visitModal')" style="width: 100%;">Done — Close</button>
+                </div>
+            </div>
+        </dialog>
+
+        <dialog id="gpModal" class="crud-modal">
+            <form id="gpForm" method="dialog" onsubmit="submitGpChangeForm(event)">
+                <h3>Select General Practitioner (GP)</h3>
+                <input type="hidden" id="changeGpPatientId">
+                <div class="form-group">
+                    <label>Choose GP Doctor:</label>
+                    <select id="changeGpDoctorId" required>
+                        <option value="">-- Select GP --</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('gpModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save GP</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="insuranceModal" class="crud-modal">
+            <form id="insuranceForm" method="dialog" onsubmit="submitInsurancePayment(event)">
+                <h3>Record Health Insurance Payment</h3>
+                <input type="hidden" id="insurancePatientId">
+                <div class="form-group">
+                    <label>Patient:</label>
+                    <input type="text" id="insurancePatientName" readonly style="opacity: 0.7;">
+                </div>
+                <div class="form-group">
+                    <label>Coverage Month / Year (Date):</label>
+                    <input type="date" id="insuranceDate" required>
+                </div>
+                <div class="form-group">
+                    <label>Payment Date:</label>
+                    <input type="date" id="insurancePaidOn" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('insuranceModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Record Payment</button>
+                </div>
+            </form>
+        </dialog>
+
+    </div>
+    <script th:src="@{/app.js}"></script>
+</body>
+</html>

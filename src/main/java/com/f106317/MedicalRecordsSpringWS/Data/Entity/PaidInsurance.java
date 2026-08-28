@@ -1,25 +1,31 @@
 package com.f106317.MedicalRecordsSpringWS.Data.Entity;
 
-import com.fasterxml.jackson.databind.ser.Serializers;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.sql.Date;
-
+import java.time.LocalDate;
 
 @Entity
+@Table(name = "paid_insurance")
 @Getter
 @Setter
+@NoArgsConstructor
 public class PaidInsurance extends BaseEntity {
 
-    @ManyToOne
-    @JoinColumn(name = "patient_id")
-    Patient patient;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "patient_id", nullable = false)
+    private Patient patient;
 
-    Date month;
+    @Column(name = "insurance_date", nullable = false)
+    private LocalDate insuranceDate;
 
-    Date paidOn;
+    @Column(name = "paid_on", nullable = false)
+    private LocalDate paidOn;
 }
