@@ -58,28 +58,32 @@ INSERT INTO patient (id, keycloak_id, egn, first_name, last_name, gp_doctor_id) 
 (15, 'c1515151-3333-3333-3333-333333333333', '9607076620', 'Teodora', 'Simeonova', 3);
 
 -- 5. Paid Insurance (Patient 1 and 2 have full 6-month continuous coverage; others have partial/none)
-INSERT INTO paid_insurance (patient_id, insurance_date, paid_on) VALUES 
--- Patient 1: 6 consecutive months
-(1, '2026-03-01', '2026-03-05'),
-(1, '2026-04-01', '2026-04-05'),
-(1, '2026-05-01', '2026-05-05'),
-(1, '2026-06-01', '2026-06-05'),
-(1, '2026-07-01', '2026-07-05'),
-(1, '2026-08-01', '2026-08-05'),
--- Patient 2: 6 consecutive months
-(2, '2026-03-01', '2026-03-10'),
-(2, '2026-04-01', '2026-04-10'),
-(2, '2026-05-01', '2026-05-10'),
-(2, '2026-06-01', '2026-06-10'),
-(2, '2026-07-01', '2026-07-10'),
-(2, '2026-08-01', '2026-08-10'),
--- Other patients: partial coverage (less than 6 months)
-(3, '2026-05-01', '2026-05-03'),
-(4, '2026-06-15', '2026-06-16'),
-(5, '2026-07-01', '2026-07-02'),
-(6, '2026-04-10', '2026-04-11'),
-(7, '2026-06-20', '2026-06-21'),
-(8, '2026-07-05', '2026-07-06');
+-- Dates are relative to CURDATE() rather than hardcoded. The coverage check looks at the 6 calendar
+-- months ending with the current one, so fixed months silently expire: a patient seeded as fully
+-- covered would start reporting as uninsured the moment the calendar rolled past the seeded window.
+-- Plain CURDATE() is the current month; INTERVAL 5 MONTH is the oldest month still in the window.
+INSERT INTO paid_insurance (patient_id, insurance_date, paid_on) VALUES
+-- Patient 1: the 6 consecutive months ending with the current one
+(1, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
+(1, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
+(1, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
+(1, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
+(1, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
+(1, DATE_FORMAT(CURDATE(),                     '%Y-%m-01'), CURDATE()),
+-- Patient 2: the same 6 consecutive months
+(2, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
+(2, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
+(2, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
+(2, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
+(2, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
+(2, DATE_FORMAT(CURDATE(),                     '%Y-%m-01'), CURDATE()),
+-- Other patients: partial coverage (a single month each, so never 6 of 6)
+(3, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
+(4, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
+(5, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
+(6, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
+(7, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
+(8, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH);
 
 -- 6. Visits
 INSERT INTO visit (id, patient_id, doctor_id, visit_date, visit_time) VALUES 

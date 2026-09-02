@@ -3,8 +3,7 @@ package com.f106317.MedicalRecordsSpringWS.Controller;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
 import com.f106317.MedicalRecordsSpringWS.DTO.VisitResponse;
-import com.f106317.MedicalRecordsSpringWS.DTO.AuditLogResponse;
-import com.f106317.MedicalRecordsSpringWS.Service.AuditLogService;
+import com.f106317.MedicalRecordsSpringWS.DTO.PendingDoctorResponse;
 import com.f106317.MedicalRecordsSpringWS.Service.DoctorService;
 import com.f106317.MedicalRecordsSpringWS.Service.VisitService;
 import lombok.RequiredArgsConstructor;
@@ -31,7 +30,6 @@ public class ReportController {
 
     private final VisitService visitService;
     private final DoctorService doctorService;
-    private final AuditLogService auditLogService;
 
     @GetMapping("/diagnoses/common")
     public ResponseEntity<List<ReportDTO.DiagnosisCount>> getMostCommonDiagnoses(
@@ -45,15 +43,15 @@ public class ReportController {
         return ResponseEntity.ok(visitService.getDistinctDiagnosisNames());
     }
 
+    /**
+     * Doctors awaiting approval. Delegates to DoctorService: deciding what "pending" means is
+     * domain logic, and the previous inline filter matched CREATE — the action an administrator's
+     * own doctor creation writes — so it listed the wrong doctors and never emptied.
+     */
     @GetMapping("/pending-registrations")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<AuditLogResponse>> getPendingRegistrations() {
-        List<AuditLogResponse> pendingDoctors = auditLogService.getAuditLogs(0, 200)
-                .getContent().stream()
-                .filter(log -> "CREATE".equals(log.getAction()) && "Doctor".equals(log.getEntityType()))
-                .map(com.f106317.MedicalRecordsSpringWS.DTO.AuditLogResponse::fromEntity)
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(pendingDoctors);
+    public ResponseEntity<List<PendingDoctorResponse>> getPendingRegistrations() {
+        return ResponseEntity.ok(doctorService.getPendingRegistrations());
     }
 
     @GetMapping("/diagnoses/patients")
@@ -148,15 +146,25 @@ public class ReportController {
         return csvResponse("doctor-sickleave-count.csv", csv);
     }
 
+    /** Largest page an endpoint will serve, matching the cap AuditLogService already applies. */
+    static final int MAX_PAGE_SIZE = 100;
+
+    /**
+     * Returns one page of an already-materialised list.
+     * WHY the long: {@code page * size} was computed as an int and silently overflowed to a
+     * negative offset for large page numbers, so the {@code start >= size} guard passed and
+     * subList threw IndexOutOfBoundsException — a 500 from a query string alone. Widening the
+     * multiplication before the comparison removes the wrap, and clamping size keeps a caller
+     * from requesting an unbounded page.
+     */
     private <T> List<T> paginate(List<T> data, int page, int size) {
-        int safePage = Math.max(0, page);
-        int safeSize = Math.max(1, size);
-        int start = safePage * safeSize;
+        int safeSize = Math.clamp(size, 1, MAX_PAGE_SIZE);
+        long start = (long) Math.max(0, page) * safeSize;
         if (start >= data.size()) {
             return List.of();
         }
-        int end = Math.min(start + safeSize, data.size());
-        return data.subList(start, end);
+        int from = (int) start;
+        return data.subList(from, Math.min(from + safeSize, data.size()));
     }
 
     private <T> String toCsv(String header, List<T> rows, Function<T, String> mapper) {

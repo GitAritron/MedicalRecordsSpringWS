@@ -3,6 +3,7 @@ package com.f106317.MedicalRecordsSpringWS.Service;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Patient;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
+import com.f106317.MedicalRecordsSpringWS.DTO.PatientSelfRegistrationRequest;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.PatientRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
@@ -40,11 +41,6 @@ public class PatientService {
                 .collect(Collectors.toList());
     }
 
-    @Transactional(readOnly = true)
-    public PatientResponse getPatientByKeycloakId(String keycloakId) {
-        return getPatientByKeycloakId(keycloakId, null);
-    }
-
     /**
      * Retrieves a patient by their Keycloak Identity Provider UUID.
      * WHAT: Maps the external Keycloak token to the internal database record.
@@ -52,7 +48,10 @@ public class PatientService {
      */
     @Transactional(readOnly = true)
     public PatientResponse getPatientByKeycloakId(String keycloakId, Authentication authentication) {
-        if (authorizationService.isPatient(authentication)) {
+        // Fails closed: anyone who is not staff must be asking for their own profile. The previous
+        // form guarded on isPatient(...), which returns false for an absent or role-less token and
+        // therefore skipped the ownership check entirely instead of refusing.
+        if (!authorizationService.isAdmin(authentication) && !authorizationService.isDoctor(authentication)) {
             String subject = authorizationService.extractSubject(authentication);
             if (subject == null || !subject.equals(keycloakId)) {
                 throw new org.springframework.security.access.AccessDeniedException("Patients can access only their own profile");
@@ -61,11 +60,6 @@ public class PatientService {
         Patient patient = patientRepository.findByKeycloakId(keycloakId)
                 .orElseThrow(() -> new ResourceNotFoundException("Patient not found with Keycloak ID: " + keycloakId));
         return PatientResponse.fromEntity(patient);
-    }
-
-    @Transactional(readOnly = true)
-    public PatientResponse getPatientById(Long id) {
-        return getPatientById(id, null);
     }
 
     /**
@@ -78,11 +72,6 @@ public class PatientService {
         Patient patient = findPatientById(id);
         authorizationService.assertPatientCanAccessPatient(authentication, patient);
         return PatientResponse.fromEntity(patient);
-    }
-
-    @Transactional
-    public PatientResponse createPatient(PatientRequest request) {
-        return createPatient(request, null);
     }
 
     /**
@@ -105,9 +94,32 @@ public class PatientService {
         return PatientResponse.fromEntity(saved);
     }
 
+    /**
+     * Registers the calling user as a patient.
+     * WHAT: Binds the new record to the Keycloak subject read from the verified token.
+     * WHY: The identity must never come from the request body — otherwise any authenticated user
+     * could create a profile bound to another person's account.
+     */
     @Transactional
-    public PatientResponse updatePatient(Long id, PatientRequest request) {
-        return updatePatient(id, request, null);
+    public PatientResponse selfRegister(PatientSelfRegistrationRequest request, Authentication authentication) {
+        String subject = authorizationService.extractSubject(authentication);
+        if (subject == null || subject.isBlank()) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "An authenticated identity is required to self-register");
+        }
+        if (patientRepository.findByKeycloakId(subject).isPresent()) {
+            throw new IllegalArgumentException("A patient profile already exists for this account");
+        }
+
+        Patient patient = new Patient();
+        patient.setKeycloakId(subject);
+        patient.setEgn(request.egn());
+        patient.setFirstName(request.firstName());
+        patient.setLastName(request.lastName());
+        patient.setGp(resolveGpDoctor(request.gpDoctorId()));
+        Patient saved = patientRepository.save(patient);
+        auditLogService.log(authentication, "SELF_REGISTER", "Patient", saved.getId());
+        return PatientResponse.fromEntity(saved);
     }
 
     /**
@@ -134,11 +146,6 @@ public class PatientService {
         return PatientResponse.fromEntity(saved);
     }
 
-    @Transactional
-    public void deletePatient(Long id) {
-        deletePatient(id, null);
-    }
-
     /**
      * Deletes a patient by ID.
      */
@@ -151,16 +158,24 @@ public class PatientService {
 
     /**
      * Updates a patient's assigned General Practitioner.
-     * Patients can update their own GP; Admins can update any patient's GP.
+     * Patients can update their own GP and administrators can update anyone's. Doctors cannot:
+     * registering a patient with a GP is an administrative decision, not a clinical one.
      */
     @Transactional
     public PatientResponse updatePatientGp(Long patientId, Long gpDoctorId, Authentication authentication) {
         Patient patient = findPatientById(patientId);
-        authorizationService.assertPatientCanAccessPatient(authentication, patient);
+        authorizationService.assertCanChangeGeneralPractitioner(authentication, patient);
         patient.setGp(resolveGpDoctor(gpDoctorId));
         Patient saved = patientRepository.save(patient);
         auditLogService.log(authentication, "UPDATE_GP", "Patient", saved.getId());
         return PatientResponse.fromEntity(saved);
+    }
+
+    /** Whether a patient record is already bound to this Keycloak subject. */
+    @Transactional(readOnly = true)
+    public boolean hasProfileFor(String keycloakId) {
+        return keycloakId != null && !keycloakId.isBlank()
+                && patientRepository.findByKeycloakId(keycloakId).isPresent();
     }
 
     /**

@@ -11,10 +11,6 @@ public record PatientResponse(
         Long gpDoctorId,
         String gpDoctorName
 ) {
-    public PatientResponse(Long id, String egn, String firstName, String lastName, Long gpDoctorId, String gpDoctorName) {
-        this(id, null, egn, firstName, lastName, gpDoctorId, gpDoctorName);
-    }
-
     public static PatientResponse fromEntity(Patient patient) {
         Long gpId = patient.getGp() != null ? patient.getGp().getId() : null;
         String gpName = patient.getGp() != null

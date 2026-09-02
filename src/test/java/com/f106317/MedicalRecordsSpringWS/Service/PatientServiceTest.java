@@ -1,18 +1,24 @@
 package com.f106317.MedicalRecordsSpringWS.Service;
 
+import com.f106317.MedicalRecordsSpringWS.TestAuth;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Doctor;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Patient;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
+import com.f106317.MedicalRecordsSpringWS.DTO.PatientSelfRegistrationRequest;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.PatientRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 
 import java.util.Arrays;
 import java.util.Optional;
@@ -34,8 +40,10 @@ class PatientServiceTest {
     @Mock
     private DoctorRepository doctorRepository;
 
-    @Mock
-    private AuthorizationService authorizationService;
+    // Real collaborator, not a mock. Mocking it away turned every ownership assertion into a
+    // no-op, which is why the tests below could not have caught an authorization regression.
+    @Spy
+    private AuthorizationService authorizationService = new AuthorizationService();
 
     @Mock
     private AuditLogService auditLogService;
@@ -73,7 +81,7 @@ class PatientServiceTest {
     @Test
     void getPatientById_success() {
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
-        PatientResponse response = patientService.getPatientById(1L);
+        PatientResponse response = patientService.getPatientById(1L, TestAuth.admin());
         assertEquals("John", response.firstName());
         assertEquals("Dr. House MD", response.gpDoctorName());
     }
@@ -82,7 +90,7 @@ class PatientServiceTest {
     @Test
     void getPatientById_notFound() {
         when(patientRepository.findById(2L)).thenReturn(Optional.empty());
-        assertThrows(ResourceNotFoundException.class, () -> patientService.getPatientById(2L));
+        assertThrows(ResourceNotFoundException.class, () -> patientService.getPatientById(2L, TestAuth.admin()));
     }
 
     /** Verifies a patient is created with the correct GP association. */
@@ -92,7 +100,7 @@ class PatientServiceTest {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
         when(patientRepository.save(any())).thenReturn(patient);
         
-        PatientResponse response = patientService.createPatient(request);
+        PatientResponse response = patientService.createPatient(request, TestAuth.admin());
         assertEquals("John", response.firstName());
     }
 
@@ -104,7 +112,7 @@ class PatientServiceTest {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
         when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        PatientResponse response = patientService.updatePatient(1L, request);
+        PatientResponse response = patientService.updatePatient(1L, request, TestAuth.admin());
         assertEquals("Jane", response.firstName());
         assertEquals("1234567890", response.egn());
     }
@@ -113,7 +121,7 @@ class PatientServiceTest {
     @Test
     void deletePatient_success() {
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
-        assertDoesNotThrow(() -> patientService.deletePatient(1L));
+        assertDoesNotThrow(() -> patientService.deletePatient(1L, TestAuth.admin()));
         verify(patientRepository, times(1)).delete(any());
     }
 
@@ -123,7 +131,7 @@ class PatientServiceTest {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
         when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        PatientResponse res = patientService.updatePatientGp(1L, 1L, null);
+        PatientResponse res = patientService.updatePatientGp(1L, 1L, TestAuth.admin());
         assertNotNull(res);
         verify(patientRepository, times(1)).save(any());
     }
@@ -133,7 +141,7 @@ class PatientServiceTest {
     void updatePatient_egnImmutable() {
         PatientRequest request = new PatientRequest(null, "9999999999", "Jane", "Smith", 1L);
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
-        assertThrows(IllegalArgumentException.class, () -> patientService.updatePatient(1L, request));
+        assertThrows(IllegalArgumentException.class, () -> patientService.updatePatient(1L, request, TestAuth.admin()));
     }
 
     /** Verifies that a non-GP doctor cannot be assigned as GP. */
@@ -144,7 +152,7 @@ class PatientServiceTest {
         specialist.setGP(false);
         PatientRequest request = new PatientRequest(null, "1234567890", "John", "Doe", 2L);
         when(doctorRepository.findById(2L)).thenReturn(Optional.of(specialist));
-        assertThrows(IllegalArgumentException.class, () -> patientService.createPatient(request));
+        assertThrows(IllegalArgumentException.class, () -> patientService.createPatient(request, TestAuth.admin()));
     }
 
     /** Verifies retrieval of patients by their assigned GP doctor ID. */
@@ -152,5 +160,149 @@ class PatientServiceTest {
     void getPatientsByGp() {
         when(patientRepository.findByGpId(1L)).thenReturn(Arrays.asList(patient));
         assertEquals(1, patientService.getPatientsByGp(1L).size());
+    }
+
+    // ──────────────────────────────────────────────
+    // Ownership rules (specification §2)
+    // ──────────────────────────────────────────────
+    // These could not previously be tested: AuthorizationService was mocked, so every assertion
+    // it makes was a no-op and the tests passed regardless of the rules.
+
+    /** "Всеки пациент може да вижда собствената си история" — a patient may read their own record. */
+    @Test
+    void getPatientById_patientCanReadOwnRecord() {
+        patient.setKeycloakId("kc-patient-1");
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+
+        PatientResponse response = patientService.getPatientById(1L, TestAuth.patient("kc-patient-1"));
+        assertEquals("John", response.firstName());
+    }
+
+    /** ...and only their own: a different patient guessing the id must be refused. */
+    @Test
+    void getPatientById_patientCannotReadAnotherPatientsRecord() {
+        patient.setKeycloakId("kc-patient-1");
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+
+        assertThrows(AccessDeniedException.class,
+                () -> patientService.getPatientById(1L, TestAuth.patient("kc-patient-2")));
+    }
+
+    /** "Лекарите трябва да могат да виждат информацията за всички пациенти" — doctors read all. */
+    @Test
+    void getPatientById_doctorCanReadAnyPatient() {
+        patient.setKeycloakId("kc-patient-1");
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+
+        assertEquals("John",
+                patientService.getPatientById(1L, TestAuth.doctor("kc-doctor-9")).firstName());
+    }
+
+    /** A patient may choose their own general practitioner. */
+    @Test
+    void updatePatientGp_patientCanChangeTheirOwn() {
+        patient.setKeycloakId("kc-patient-1");
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertNotNull(patientService.updatePatientGp(1L, 1L, TestAuth.patient("kc-patient-1")));
+    }
+
+    @Test
+    void updatePatientGp_patientCannotChangeAnotherPatientsGp() {
+        patient.setKeycloakId("kc-patient-1");
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+
+        assertThrows(AccessDeniedException.class,
+                () -> patientService.updatePatientGp(1L, 1L, TestAuth.patient("kc-patient-2")));
+        verify(patientRepository, never()).save(any());
+    }
+
+    /**
+     * Registering a patient with a GP is administrative, not clinical, so doctors are excluded —
+     * matching the endpoint's own rule. The general patient-access check permits doctors, which is
+     * why this operation uses a narrower one; without it the service would quietly allow more than
+     * the controller does.
+     */
+    @Test
+    void updatePatientGp_doctorCannotChangeGp() {
+        patient.setKeycloakId("kc-patient-1");
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+
+        assertThrows(AccessDeniedException.class,
+                () -> patientService.updatePatientGp(1L, 1L, TestAuth.doctor("kc-doctor-1")));
+        verify(patientRepository, never()).save(any());
+    }
+
+    @Test
+    void getPatientByKeycloakId_patientCannotReadAnotherProfile() {
+        assertThrows(AccessDeniedException.class,
+                () -> patientService.getPatientByKeycloakId("kc-patient-1", TestAuth.patient("kc-patient-2")));
+        verify(patientRepository, never()).findByKeycloakId(any());
+    }
+
+    /**
+     * Regression guard for the fail-open guard this method used to carry: it keyed on
+     * isPatient(...), which is false for an absent token, so the ownership check was skipped
+     * entirely rather than refusing.
+     */
+    @Test
+    void getPatientByKeycloakId_refusesWithoutAuthentication() {
+        assertThrows(AccessDeniedException.class,
+                () -> patientService.getPatientByKeycloakId("kc-patient-1", null));
+        verify(patientRepository, never()).findByKeycloakId(any());
+    }
+
+    /** A token carrying no realm roles must not be treated as staff either. */
+    @Test
+    void getPatientByKeycloakId_refusesRolelessToken() {
+        assertThrows(AccessDeniedException.class,
+                () -> patientService.getPatientByKeycloakId("kc-patient-1", TestAuth.roleless("kc-nobody")));
+    }
+
+    // ──────────────────────────────────────────────
+    // Self-registration
+    // ──────────────────────────────────────────────
+
+    /**
+     * Verifies self-registration binds the record to the caller's token subject.
+     * WHY: PatientSelfRegistrationRequest carries no keycloakId at all, so the only possible
+     * source is the verified token — a user cannot attach a profile to another account.
+     */
+    @Test
+    void selfRegister_bindsToTokenSubject() {
+        PatientSelfRegistrationRequest request =
+                new PatientSelfRegistrationRequest("1234567890", "John", "Doe", null);
+        when(patientRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.empty());
+        when(patientRepository.save(any(Patient.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        patientService.selfRegister(request, TestAuth.patient("kc-sub-123"));
+
+        ArgumentCaptor<Patient> saved = ArgumentCaptor.forClass(Patient.class);
+        verify(patientRepository).save(saved.capture());
+        assertEquals("kc-sub-123", saved.getValue().getKeycloakId());
+    }
+
+    /** Verifies a second self-registration for the same account is rejected. */
+    @Test
+    void selfRegister_rejectsDuplicateProfile() {
+        PatientSelfRegistrationRequest request =
+                new PatientSelfRegistrationRequest("1234567890", "John", "Doe", null);
+        when(patientRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.of(patient));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> patientService.selfRegister(request, TestAuth.patient("kc-sub-123")));
+        verify(patientRepository, never()).save(any());
+    }
+
+    /** Verifies self-registration refuses to proceed without an authenticated identity. */
+    @Test
+    void selfRegister_requiresAuthentication() {
+        PatientSelfRegistrationRequest request =
+                new PatientSelfRegistrationRequest("1234567890", "John", "Doe", null);
+
+        assertThrows(AccessDeniedException.class, () -> patientService.selfRegister(request, null));
+        verify(patientRepository, never()).save(any());
     }
 }

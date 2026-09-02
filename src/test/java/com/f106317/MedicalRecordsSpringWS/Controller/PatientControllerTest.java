@@ -54,7 +54,7 @@ class PatientControllerTest {
     @MockitoBean
     private com.f106317.MedicalRecordsSpringWS.Service.KeycloakAdminService keycloakAdminService;
 
-    private final PatientResponse samplePatient = new PatientResponse(1L, "1234567890", "John", "Doe", 1L, "Dr. House MD");
+    private final PatientResponse samplePatient = new PatientResponse(1L, null, "1234567890", "John", "Doe", 1L, "Dr. House MD");
 
     /** Verifies GET /api/patients returns a list of patients for ADMIN users. */
     @Test

@@ -12,9 +12,20 @@ import java.time.LocalDate;
 public interface PaidInsuranceRepository extends JpaRepository<PaidInsurance, Long> {
 
     /**
-     * Checks if a patient has paid insurance for ALL months in the last 6 months.
-     * Counts distinct year-month combinations to ensure continuous coverage.
+     * WHAT: Counts the distinct calendar months covered by payments inside a closed date window.
+     * WHY: Continuous coverage means one payment per month, so we count distinct year-month pairs
+     * rather than rows — several payments in the same month still count once. The caller compares
+     * the result against the number of months required, keeping the threshold out of the query.
+     * The window is closed at both ends so that a future-dated payment cannot count towards it.
      */
-    @Query("SELECT COUNT(DISTINCT CONCAT(YEAR(p.insuranceDate), '-', MONTH(p.insuranceDate))) >= 6 FROM PaidInsurance p WHERE p.patient.id = :patientId AND p.insuranceDate >= :sixMonthsAgo")
-    boolean hasContinuousInsurance(@Param("patientId") Long patientId, @Param("sixMonthsAgo") LocalDate sixMonthsAgo);
+    @Query("""
+            SELECT COUNT(DISTINCT CONCAT(YEAR(p.insuranceDate), '-', MONTH(p.insuranceDate)))
+            FROM PaidInsurance p
+            WHERE p.patient.id = :patientId
+              AND p.insuranceDate >= :windowStart
+              AND p.insuranceDate <= :windowEnd
+            """)
+    long countCoveredMonths(@Param("patientId") Long patientId,
+                            @Param("windowStart") LocalDate windowStart,
+                            @Param("windowEnd") LocalDate windowEnd);
 }

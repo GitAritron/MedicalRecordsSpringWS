@@ -13,12 +13,11 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.SQLRestriction;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "visit", uniqueConstraints = {
@@ -44,11 +43,13 @@ public class Visit extends BaseEntity {
     @Column(name = "visit_time", nullable = false)
     private LocalTime visitTime;
 
+    // Set, not List: VisitRepository fetches both collections in one entity graph, and Hibernate
+    // refuses to fetch two bags (List without @OrderColumn) simultaneously — see MultipleBagFetchException.
     @OneToMany(mappedBy = "visit", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Diagnosis> diagnoses = new ArrayList<>();
+    private Set<Diagnosis> diagnoses = new LinkedHashSet<>();
 
     @OneToMany(mappedBy = "visit", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Prescription> prescriptions = new ArrayList<>();
+    private Set<Prescription> prescriptions = new LinkedHashSet<>();
 
     @OneToOne(mappedBy = "visit", cascade = CascadeType.ALL, orphanRemoval = true)
     private SickLeave sickLeave;

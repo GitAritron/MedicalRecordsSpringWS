@@ -2,6 +2,7 @@ package com.f106317.MedicalRecordsSpringWS.Controller;
 
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorResponse;
+import com.f106317.MedicalRecordsSpringWS.DTO.DoctorSelfRegistrationRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.SpecializationRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.SpecializationResponse;
@@ -56,7 +57,7 @@ public class DoctorController {
     }
 
     @GetMapping("/keycloak/{keycloakId}")
-    @PreAuthorize("hasRole('DOCTOR')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR')")
     public ResponseEntity<DoctorResponse> getDoctorByKeycloakId(@PathVariable String keycloakId) {
         return ResponseEntity.ok(doctorService.getDoctorByKeycloakId(keycloakId));
     }
@@ -72,9 +73,34 @@ public class DoctorController {
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN') or isAuthenticated()")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<DoctorResponse> createDoctor(@Valid @RequestBody DoctorRequest request, Authentication authentication) {
         return new ResponseEntity<>(doctorService.createDoctor(request, authentication), HttpStatus.CREATED);
+    }
+
+    /**
+     * Lets a signed-in user apply for a doctor account.
+     * WHY: Separate from the admin endpoint above because the applicant may not choose their own
+     * identity or GP status — the service derives both. The account stays inactive until an
+     * administrator approves it through {@link #approveDoctor}.
+     */
+    @PostMapping("/self-register")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<DoctorResponse> selfRegisterDoctor(@Valid @RequestBody DoctorSelfRegistrationRequest request,
+                                                             Authentication authentication) {
+        return new ResponseEntity<>(doctorService.selfRegister(request, authentication), HttpStatus.CREATED);
+    }
+
+    /**
+     * Approves a self-registered doctor, granting them the DOCTOR role in Keycloak.
+     * WHY: completes the self-registration flow inside the application. Without it an administrator
+     * had to assign the role by hand in the Keycloak console, and the pending list never cleared
+     * because nothing recorded that the approval had happened.
+     */
+    @PostMapping("/{id}/approve")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<DoctorResponse> approveDoctor(@PathVariable Long id, Authentication authentication) {
+        return ResponseEntity.ok(doctorService.approveDoctor(id, authentication));
     }
 
     @PutMapping("/{id}")

@@ -64,11 +64,27 @@ function login() { keycloak.login(); }
 function register() { keycloak.register(); }
 function logout() { keycloak.logout(); }
 
+// Escapes text for interpolation into HTML. The previous implementation round-tripped through
+// div.textContent -> div.innerHTML, which escapes & < > but leaves quotes untouched — so any value
+// placed inside a quoted attribute (value="${esc(x)}") could still break out of it.
+const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 function esc(str) {
     if (str == null) return '';
-    const div = document.createElement('div');
-    div.textContent = String(str);
-    return div.innerHTML;
+    return String(str).replace(/[&<>"']/g, ch => ESC_MAP[ch]);
+}
+
+// Resolves a display name from an id we already hold, so inline onclick handlers only ever carry
+// numbers. esc() is NOT safe inside an onclick attribute: the HTML parser decodes entities before
+// the JavaScript is compiled, so an escaped quote turns back into a real one and can close the
+// string literal. Keeping names out of generated code sidesteps that entirely.
+function patientNameById(patientId) {
+    const p = patientsList.find(x => x.id === patientId);
+    return p ? `${p.firstName} ${p.lastName}` : `ID ${patientId}`;
+}
+
+function doctorNameById(doctorId) {
+    const d = doctorsList.find(x => x.id === doctorId);
+    return d ? `${d.firstName} ${d.lastName}` : `ID ${doctorId}`;
 }
 
 async function fetchWithAuth(url, options = {}) {
@@ -101,9 +117,14 @@ function renderTabs() {
         tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorVisits()">Visits</button>`;
         tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadAuditLogs()">Audit Logs</button>`;
     } else if (currentUserRole === 'DOCTOR') {
+        // Specification §2: "Лекарите трябва да могат да виждат информацията за всички пациенти
+        // и лекари." The API already granted doctors the patient directory and the reports, but
+        // neither had a tab, so the permission was unreachable from the interface.
         tabsHtml += `<button class="tab-btn active" onclick="setActiveTab(this); loadMyPatients()">My Patients</button>`;
+        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadAllPatients()">All Patients</button>`;
         tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorVisits()">Visits</button>`;
         tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorsDirectory()">All Doctors</button>`;
+        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadFullReportsDashboard()">Reports</button>`;
     } else if (currentUserRole === 'PATIENT') {
         tabsHtml += `<button class="tab-btn active" onclick="setActiveTab(this); loadPatientHistory()">My Medical History</button>`;
         tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorsDirectory()">Doctors Directory</button>`;
@@ -119,8 +140,42 @@ async function loadDashboard() {
 
 // ================= NEW USER ROLE SELECTION =================
 
-function renderNewUserRoleSelection() {
+/**
+ * A user with no realm role has either not registered yet, or has applied as a doctor and is
+ * waiting for approval. Distinguishing the two stops an applicant being shown the role picker
+ * again on every sign-in, only to hit the duplicate-profile guard if they re-apply.
+ */
+async function renderNewUserRoleSelection() {
     const contentArea = document.getElementById('content-area');
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/registration-status`);
+        if (res.ok) {
+            const status = await res.json();
+            if (status.hasDoctorProfile) {
+                contentArea.innerHTML = `
+                    <div style="max-width: 550px; margin: 2rem auto; text-align: center; background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 2rem; border-radius: 12px;">
+                        <h3 style="color: #F59E0B;">Application under review</h3>
+                        <p style="color: #94A3B8; margin-top: 0.75rem;">Your doctor profile has been submitted. An administrator still needs to approve it before you can sign in as a doctor.</p>
+                        <p style="color: #64748B; font-size: 0.85rem; margin-top: 1rem;">Once approved, sign out and back in to pick up your new role.</p>
+                        <button class="btn btn-secondary" style="margin-top: 1.25rem;" onclick="logout()">Sign out</button>
+                    </div>`;
+                return;
+            }
+            if (status.hasPatientProfile) {
+                contentArea.innerHTML = `
+                    <div style="max-width: 550px; margin: 2rem auto; text-align: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #38BDF8; padding: 2rem; border-radius: 12px;">
+                        <h3 style="color: #38BDF8;">Profile already created</h3>
+                        <p style="color: #94A3B8; margin-top: 0.75rem;">Your patient profile exists but your account has not picked up the PATIENT role yet.</p>
+                        <button class="btn btn-primary" style="margin-top: 1.25rem;" onclick="location.reload()">Reload</button>
+                    </div>`;
+                return;
+            }
+        }
+    } catch (err) {
+        // Fall through to the role picker — a status check failure should not block registration.
+        console.error('Could not read registration status', err);
+    }
+
     contentArea.innerHTML = `
         <div style="max-width: 550px; margin: 2rem auto; text-align: center;">
             <h3>Welcome, ${keycloak.tokenParsed.preferred_username}!</h3>
@@ -195,10 +250,10 @@ function showDoctorRegistrationForm() {
                     <label>Last Name:</label>
                     <input type="text" id="selfDocLastName" value="${esc(keycloak.tokenParsed.family_name || '')}" required>
                 </div>
-                <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-                    <label style="margin-bottom: 0;">Are you a General Practitioner (GP)?:</label>
-                    <input type="checkbox" id="selfDocIsGp" style="width: auto;">
-                </div>
+                <p style="color: #94A3B8; font-size: 0.85rem; margin: 0.75rem 0 0;">
+                    An administrator reviews every application. They grant your Doctor role and, if
+                    applicable, register you as a General Practitioner.
+                </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Submit Application</button>
             </form>
         </div>
@@ -208,8 +263,8 @@ function showDoctorRegistrationForm() {
 async function submitSelfPatientRegistration(e) {
     e.preventDefault();
     const gpVal = document.getElementById('selfGpId') ? document.getElementById('selfGpId').value : '';
+    // No keycloakId: the server binds the profile to our verified token subject.
     const patientData = {
-        keycloakId: keycloak.tokenParsed.sub,
         firstName: document.getElementById('selfFirstName').value.trim(),
         lastName: document.getElementById('selfLastName').value.trim(),
         egn: document.getElementById('selfEgn').value.trim(),
@@ -217,7 +272,7 @@ async function submitSelfPatientRegistration(e) {
     };
 
     try {
-        const res = await fetchWithAuth(`${API_BASE}/patients`, { method: 'POST', body: JSON.stringify(patientData) });
+        const res = await fetchWithAuth(`${API_BASE}/patients/self-register`, { method: 'POST', body: JSON.stringify(patientData) });
         if (!res.ok) {
             const errJson = await res.json().catch(() => null);
             throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
@@ -251,16 +306,16 @@ async function submitSelfPatientRegistration(e) {
 
 async function submitSelfDoctorRegistration(e) {
     e.preventDefault();
+    // No keycloakId and no isGP: the server derives the identity from our token, and only an
+    // administrator may grant GP status.
     const doctorData = {
-        keycloakId: keycloak.tokenParsed.sub,
         firstName: document.getElementById('selfDocFirstName').value.trim(),
         lastName: document.getElementById('selfDocLastName').value.trim(),
-        isGP: document.getElementById('selfDocIsGp').checked,
         specializationIds: []
     };
 
     try {
-        const res = await fetchWithAuth(`${API_BASE}/doctors`, { method: 'POST', body: JSON.stringify(doctorData) });
+        const res = await fetchWithAuth(`${API_BASE}/doctors/self-register`, { method: 'POST', body: JSON.stringify(doctorData) });
         if (!res.ok) {
             const errJson = await res.json().catch(() => null);
             throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
@@ -269,7 +324,7 @@ async function submitSelfDoctorRegistration(e) {
         container.innerHTML = `
             <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10B981; color: #10B981; padding: 1.5rem; border-radius: 12px; text-align: center;">
                 <h4>Registration Submitted!</h4>
-                <p>Your doctor profile has been created. An Administrator will review your account and grant your Doctor security role in Keycloak.</p>
+                <p>Your doctor profile has been created and is awaiting approval. An administrator will grant your Doctor security role in Keycloak, and register you as a General Practitioner if that applies. You will not be able to sign in as a doctor until then.</p>
             </div>
         `;
     } catch (err) { alert("Registration Error: " + err.message); }
@@ -341,7 +396,7 @@ async function submitSpecForm(e) {
             throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
         }
         if (msgEl) {
-            msgEl.innerHTML = `<p style="color: #10B981; margin: 0.5rem 0; font-weight: 500;">✓ Specialization "${name}" created successfully!</p>`;
+            msgEl.innerHTML = `<p style="color: #10B981; margin: 0.5rem 0; font-weight: 500;">✓ Specialization "${esc(name)}" created successfully!</p>`;
         }
         await fetchSpecializations();
         setTimeout(() => {
@@ -350,7 +405,7 @@ async function submitSpecForm(e) {
         }, 1200);
     } catch (err) {
         if (msgEl) {
-            msgEl.innerHTML = `<p style="color: #EF4444; margin: 0.5rem 0;">Error: ${err.message}</p>`;
+            msgEl.innerHTML = `<p style="color: #EF4444; margin: 0.5rem 0;">Error: ${esc(err.message)}</p>`;
         }
     }
 }
@@ -390,7 +445,7 @@ function populateGpDropdown(selectedGpId = null) {
     
     doctorsList.forEach(doc => {
         const selected = (selectedGpId && doc.id === selectedGpId) ? 'selected' : '';
-        gpSelect.innerHTML += `<option value="${doc.id}" ${selected}>Dr. ${doc.firstName} ${doc.lastName} ${doc.isGP ? '(GP)' : ''}</option>`;
+        gpSelect.innerHTML += `<option value="${doc.id}" ${selected}>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)} ${doc.isGP ? '(GP)' : ''}</option>`;
     });
 }
 
@@ -449,9 +504,9 @@ async function loadAllPatients() {
             const safeName = esc(`${p.firstName} ${p.lastName}`);
             html += `<tr><td>${safeName}</td><td>${esc(p.egn)}</td><td>${esc(p.gpDoctorName || 'Not assigned')}</td>`;
             html += `<td>`;
-            html += `<button class="action-btn" style="background:#0284C7;color:white;" onclick="viewPatientVisitsDirect(${p.id}, '${esc(p.firstName)} ${esc(p.lastName)}')">Visits</button> `;
+            html += `<button class="action-btn" style="background:#0284C7;color:white;" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `;
             if (currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR') {
-                html += `<button class="action-btn" style="background:#059669;color:white;" onclick="openRecordInsuranceModal(${p.id}, '${esc(p.firstName)} ${esc(p.lastName)}')">+ Insurance</button> `;
+                html += `<button class="action-btn" style="background:#059669;color:white;" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button> `;
             }
             if (currentUserRole === 'ADMIN') {
                 html += `<button class="action-btn btn-edit" onclick="editPatient(${p.id})">Edit</button> `;
@@ -508,7 +563,7 @@ function populateSpecsCheckboxes(assignedSpecs = []) {
         container.innerHTML += `
             <label class="checkbox-item">
                 <input type="checkbox" class="spec-cb" value="${spec.id}" ${isChecked ? 'checked' : ''}>
-                ${spec.name}
+                ${esc(spec.name)}
             </label>
         `;
     });
@@ -565,20 +620,30 @@ async function loadDoctorsDirectory() {
             html += `<button class="btn btn-secondary btn-add-new" onclick="openAddSpecModal()">+ Add Specialization</button>`;
         }
 
+        // Clinical staff get an Actions column; only admins get the editing controls inside it.
+        const showActions = currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR';
+
         html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">GP Status</th><th onclick="sortTable(2, this)">Specializations</th>';
-        if (currentUserRole === 'ADMIN') html += `<th>Actions</th>`;
+        if (showActions) html += `<th>Actions</th>`;
         html += `</tr></thead><tbody>`;
-        
+
         doctorsList.forEach(doc => {
-            const specs = doc.specializations && doc.specializations.length > 0 
-                ? doc.specializations.map(s => esc(s.name || s)).join(', ') 
+            const specs = doc.specializations && doc.specializations.length > 0
+                ? doc.specializations.map(s => esc(s.name || s)).join(', ')
                 : '—';
             html += `<tr><td>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)}</td><td>${doc.isGP ? 'Yes' : 'No'}</td><td>${specs}</td>`;
-            if (currentUserRole === 'ADMIN') {
-                html += `<td>
-                    <button class="action-btn btn-edit" onclick="editDoctor(${doc.id})">Edit</button>
-                    <button class="action-btn btn-delete" onclick="deleteDoctor(${doc.id})">Delete</button>
-                </td>`;
+            if (showActions) {
+                html += `<td>`;
+                // Requirement 3c: list of patients registered with a given GP. Only general
+                // practitioners have a patient roster, so the button belongs on those rows.
+                if (doc.isGP) {
+                    html += `<button class="action-btn" style="background:#0284C7;color:white;" onclick="viewGpPatients(${doc.id})">Patients</button> `;
+                }
+                if (currentUserRole === 'ADMIN') {
+                    html += `<button class="action-btn btn-edit" onclick="editDoctor(${doc.id})">Edit</button>
+                    <button class="action-btn btn-delete" onclick="deleteDoctor(${doc.id})">Delete</button>`;
+                }
+                html += `</td>`;
             }
             html += `</tr>`;
         });
@@ -645,13 +710,13 @@ function populateVisitSelects(selectedPatientId = null, selectedDoctorId = null)
     patSelect.innerHTML = '<option value="">-- Select Patient --</option>';
     patientsList.forEach(p => {
         const sel = (selectedPatientId && p.id === selectedPatientId) ? 'selected' : '';
-        patSelect.innerHTML += `<option value="${p.id}" ${sel}>${p.firstName} ${p.lastName} (EGN: ${p.egn})</option>`;
+        patSelect.innerHTML += `<option value="${p.id}" ${sel}>${esc(p.firstName)} ${esc(p.lastName)} (EGN: ${esc(p.egn)})</option>`;
     });
 
     docSelect.innerHTML = '<option value="">-- Select Doctor --</option>';
     doctorsList.forEach(d => {
         const sel = (selectedDoctorId && d.id === selectedDoctorId) ? 'selected' : '';
-        docSelect.innerHTML += `<option value="${d.id}" ${sel}>Dr. ${d.firstName} ${d.lastName}</option>`;
+        docSelect.innerHTML += `<option value="${d.id}" ${sel}>Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`;
     });
 
     if (currentUserRole === 'DOCTOR') {
@@ -725,7 +790,7 @@ function renderExistingClinicalData(visit) {
     if (visit.diagnoses && visit.diagnoses.length > 0) {
         diagList.innerHTML = visit.diagnoses.map(d =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #1E3A5F; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
-                <span style="color: #E2E8F0;">${d.name}</span>
+                <span style="color: #E2E8F0;">${esc(d.name)}</span>
                 <button type="button" onclick="removeDiagnosis(${d.id})" style="background: none; border: none; color: #EF4444; cursor: pointer; font-size: 1rem;">✕</button>
             </div>`
         ).join('');
@@ -738,7 +803,7 @@ function renderExistingClinicalData(visit) {
     if (visit.prescriptions && visit.prescriptions.length > 0) {
         prescList.innerHTML = visit.prescriptions.map(p =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(16, 185, 129, 0.1); border: 1px solid #065F46; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
-                <span style="color: #E2E8F0;">${p.note}</span>
+                <span style="color: #E2E8F0;">${esc(p.note)}</span>
                 <button type="button" onclick="removePrescription(${p.id})" style="background: none; border: none; color: #EF4444; cursor: pointer; font-size: 1rem;">✕</button>
             </div>`
         ).join('');
@@ -876,7 +941,7 @@ async function loadDoctorVisits() {
         
         visitsList.forEach(v => {
             const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
-            html += `<tr><td>${v.visitDate} ${v.visitTime}</td><td>${v.patientName}</td><td>Dr. ${v.doctorName}</td><td>${diagNames}</td>`;
+            html += `<tr><td>${esc(v.visitDate)} ${esc(v.visitTime)}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td>`;
             
             if (currentUserRole === 'ADMIN' || (currentUserRole === 'DOCTOR' && v.doctorId === currentDoctorId)) {
                 html += `<td>
@@ -891,7 +956,7 @@ async function loadDoctorVisits() {
         html += '</tbody></table>';
         contentArea.innerHTML = html;
     } catch (error) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading visits: ${error.message}</p>`;
+        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading visits: ${esc(error.message)}</p>`;
     }
 }
 
@@ -913,19 +978,19 @@ async function loadMyPatients() {
         if (!patResponse.ok) throw new Error(`HTTP ${patResponse.status}`);
         const patients = await patResponse.json();
 
-        let html = `<h3>My Patients (Dr. ${doctor.firstName} ${doctor.lastName})</h3>`;
+        let html = `<h3>My Patients (Dr. ${esc(doctor.firstName)} ${esc(doctor.lastName)})</h3>`;
         if (patients.length === 0) {
             html += '<p>No patients assigned to you.</p>';
         } else {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th></tr></thead><tbody>';
             patients.forEach(p => {
-                html += `<tr><td>${p.firstName} ${p.lastName}</td><td>${p.egn}</td></tr>`;
+                html += `<tr><td>${esc(p.firstName)} ${esc(p.lastName)}</td><td>${esc(p.egn)}</td></tr>`;
             });
             html += '</tbody></table>';
         }
         contentArea.innerHTML = html;
     } catch (error) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patients: ${error.message}</p>`;
+        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patients: ${esc(error.message)}</p>`;
     }
 }
 
@@ -986,31 +1051,45 @@ async function loadPatientHistory() {
 
 // ================= FULL REPORTS DASHBOARD & INLINE FILTER PANELS =================
 
+/** Builds the "doctors awaiting approval" banner, or an empty string when nothing is pending. */
+async function renderPendingApprovals() {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/reports/pending-registrations`);
+        if (!res.ok) return '';
+        const pending = await res.json();
+        if (pending.length === 0) return '';   // banner disappears once everyone is approved
+
+        const rows = pending.map(d =>
+            `<tr>
+                <td>Dr. ${esc(d.doctorName)}</td>
+                <td>${d.registeredAt ? esc(new Date(d.registeredAt).toLocaleDateString()) : '—'}</td>
+                <td><button class="action-btn" style="background:#10B981;color:white;" onclick="approveDoctor(${d.doctorId})">Approve</button></td>
+            </tr>`
+        ).join('');
+
+        return `
+            <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
+                <h4 style="color: #F59E0B; margin-bottom: 0.75rem;">🔔 Doctors Awaiting Approval (${pending.length})</h4>
+                <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">These people registered themselves as doctors. Approving grants them the <strong>DOCTOR</strong> role so they can sign in. Set GP status separately from the Doctors tab.</p>
+                <table class="data-table" style="margin-top: 0.5rem;">
+                    <thead><tr><th>Name</th><th>Registered</th><th>Action</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+    } catch (e) {
+        console.error('Error loading pending registrations', e);
+        return '';
+    }
+}
+
 async function loadFullReportsDashboard() {
     const contentArea = document.getElementById('content-area');
 
-    // Fetch pending doctor registrations
+    // Pending approvals are an administrator concern; the endpoint refuses doctors, so don't ask.
     let pendingHtml = '';
-    try {
-        const pendingRes = await fetchWithAuth(`${API_BASE}/reports/pending-registrations`);
-        if (pendingRes.ok) {
-            const pendingLogs = await pendingRes.json();
-            if (pendingLogs.length > 0) {
-                let rows = pendingLogs.map(log =>
-                    `<tr><td>${log.entityType}</td><td>#${log.entityId}</td><td>${log.actor === 'system' ? 'Self-registration' : log.actor}</td><td>${log.createdAt ? new Date(log.createdAt).toLocaleDateString() : '—'}</td></tr>`
-                ).join('');
-                pendingHtml = `
-                    <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
-                        <h4 style="color: #F59E0B; margin-bottom: 0.75rem;">🔔 Pending Doctor Registrations (${pendingLogs.length})</h4>
-                        <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">These doctor profiles were created via self-registration. Assign the <strong>DOCTOR</strong> role in <a href="http://localhost:8081/admin/master/console/#/medical-records/users" target="_blank" style="color: #38BDF8;">Keycloak Admin Console</a> to approve them.</p>
-                        <table class="data-table" style="margin-top: 0.5rem;">
-                            <thead><tr><th>Type</th><th>Entity ID</th><th>Registered By</th><th>Date</th></tr></thead>
-                            <tbody>${rows}</tbody>
-                        </table>
-                    </div>`;
-            }
-        }
-    } catch (e) { console.error('Error loading pending registrations', e); }
+    if (currentUserRole === 'ADMIN') {
+        pendingHtml = await renderPendingApprovals();
+    }
     
     let html = `
         <h3>Full Analytical Reports Dashboard</h3>
@@ -1131,7 +1210,7 @@ async function renderReportFilterPanel(type) {
                     <div style="flex: 1; min-width: 200px;">
                         <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">Select Doctor:</label>
                         <select id="inlineDocSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
-                            ${doctorsList.map(d => `<option value="${d.id}">Dr. ${d.firstName} ${d.lastName}</option>`).join('')}
+                            ${doctorsList.map(d => `<option value="${d.id}">Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`).join('')}
                         </select>
                     </div>
                     <div>
@@ -1155,7 +1234,7 @@ async function renderReportFilterPanel(type) {
                     <div style="flex: 1; min-width: 240px;">
                         <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">Select Patient:</label>
                         <select id="inlinePatSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
-                            ${patientsList.map(p => `<option value="${p.id}">${p.firstName} ${p.lastName} (EGN: ${p.egn})</option>`).join('')}
+                            ${patientsList.map(p => `<option value="${p.id}">${esc(p.firstName)} ${esc(p.lastName)} (EGN: ${esc(p.egn)})</option>`).join('')}
                         </select>
                     </div>
                     <button class="btn btn-primary" onclick="runPatientVisitsReport()">Generate Report</button>
@@ -1220,25 +1299,27 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         
-        let html = `<h4 style="color: #F8FAFC; margin-bottom: 1rem;">${title}</h4>`;
+        // Escape centrally: every report title and cell here is server data (patient and doctor
+        // names, diagnosis text, prescription notes), and no row mapper produces markup.
+        let html = `<h4 style="color: #F8FAFC; margin-bottom: 1rem;">${esc(title)}</h4>`;
         if (data.length === 0) {
             html += '<p style="color: #94A3B8;">No records found for this report.</p>';
         } else {
             html += '<table class="data-table"><thead><tr>';
-            headers.forEach((h, i) => html += `<th onclick="sortTable(${i}, this)">${h}</th>`);
+            headers.forEach((h, i) => html += `<th onclick="sortTable(${i}, this)">${esc(h)}</th>`);
             html += '</tr></thead><tbody>';
-            
+
             data.forEach(item => {
                 const rowData = rowMapper(item);
                 html += '<tr>';
-                rowData.forEach(cell => html += `<td>${cell}</td>`);
+                rowData.forEach(cell => html += `<td>${esc(cell)}</td>`);
                 html += '</tr>';
             });
             html += '</tbody></table>';
         }
         resultsArea.innerHTML = html;
     } catch (err) {
-        resultsArea.innerHTML = `<p style="color: #EF4444;">Error generating report: ${err.message}</p>`;
+        resultsArea.innerHTML = `<p style="color: #EF4444;">Error generating report: ${esc(err.message)}</p>`;
     }
 }
 
@@ -1381,9 +1462,9 @@ async function submitGpChangeForm(e) {
 }
 
 // ================= HEALTH INSURANCE =================
-function openRecordInsuranceModal(patientId, patientName) {
+function openRecordInsuranceModal(patientId) {
     document.getElementById('insurancePatientId').value = patientId;
-    document.getElementById('insurancePatientName').value = patientName;
+    document.getElementById('insurancePatientName').value = patientNameById(patientId);
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('insuranceDate').value = today;
     document.getElementById('insurancePaidOn').value = today;
@@ -1399,7 +1480,8 @@ async function submitInsurancePayment(e) {
     try {
         const res = await fetchWithAuth(`${API_BASE}/patients/${patientId}/insurance`, {
             method: 'POST',
-            body: JSON.stringify({ patientId, insuranceDate, paidOn })
+            // patientId travels in the path, not the body.
+            body: JSON.stringify({ insuranceDate, paidOn })
         });
         if (!res.ok) {
             const err = await res.json().catch(() => null);
@@ -1414,7 +1496,61 @@ async function submitInsurancePayment(e) {
 }
 
 // ================= DIRECT PATIENT VISITS LOOKUP =================
-async function viewPatientVisitsDirect(patientId, patientName) {
+/**
+ * Grants a self-registered doctor the DOCTOR role, then refreshes the dashboard so the
+ * approved entry disappears from the pending banner.
+ */
+async function approveDoctor(doctorId) {
+    if (!confirm('Approve this doctor and grant them the DOCTOR role?')) return;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/doctors/${doctorId}/approve`, { method: 'POST' });
+        if (!res.ok) {
+            const errJson = await res.json().catch(() => null);
+            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
+        }
+        await loadFullReportsDashboard();
+    } catch (err) {
+        alert('Could not approve doctor: ' + err.message);
+    }
+}
+
+/**
+ * Requirement 3c — "Списък с пациенти, които имат даден личен лекар".
+ * Renders into the main content area rather than through fetchReport, because the reports
+ * dashboard elements that helper writes into do not exist on the Doctors Directory screen.
+ */
+async function viewGpPatients(doctorId) {
+    const doctorName = doctorNameById(doctorId);
+    const contentArea = document.getElementById('content-area');
+    contentArea.innerHTML = `<p>Loading patients registered with Dr. ${esc(doctorName)}...</p>`;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/doctors/${doctorId}/patients`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const patients = await res.json();
+
+        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3>Patients registered with Dr. ${esc(doctorName)}</h3>
+            <button class="btn btn-secondary" onclick="loadDoctorsDirectory()">← Back to Doctors</button>
+        </div>`;
+
+        if (patients.length === 0) {
+            html += '<p>No patients are registered with this general practitioner.</p>';
+        } else {
+            html += `<p style="color:#94A3B8;">${patients.length} patient(s) registered.</p>`;
+            html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th></tr></thead><tbody>';
+            patients.forEach(p => {
+                html += `<tr><td>${esc(p.firstName)} ${esc(p.lastName)}</td><td>${esc(p.egn)}</td></tr>`;
+            });
+            html += '</tbody></table>';
+        }
+        contentArea.innerHTML = html;
+    } catch (err) {
+        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patients: ${esc(err.message)}</p>`;
+    }
+}
+
+async function viewPatientVisitsDirect(patientId) {
+    const patientName = patientNameById(patientId);
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = `<p>Loading visits for ${esc(patientName)}...</p>`;
     try {

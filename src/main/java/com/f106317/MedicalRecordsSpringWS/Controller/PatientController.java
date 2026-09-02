@@ -3,6 +3,7 @@ package com.f106317.MedicalRecordsSpringWS.Controller;
 import com.f106317.MedicalRecordsSpringWS.DTO.InsurancePaymentRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
+import com.f106317.MedicalRecordsSpringWS.DTO.PatientSelfRegistrationRequest;
 import com.f106317.MedicalRecordsSpringWS.Service.InsuranceService;
 import com.f106317.MedicalRecordsSpringWS.Service.KeycloakAdminService;
 import com.f106317.MedicalRecordsSpringWS.Service.PatientService;
@@ -41,10 +42,12 @@ public class PatientController {
 
     /**
      * Retrieves a patient profile by Keycloak ID.
-     * WHY: Used by the frontend SPA when a PATIENT logs in to load their medical history.
+     * WHY: Used by the SPA when a patient signs in, to resolve their own record before loading
+     * their history. Administrators are admitted too, so that staff can resolve an account the
+     * same way; the service still refuses anyone else asking for a profile that is not theirs.
      */
     @GetMapping("/keycloak/{keycloakId}")
-    @PreAuthorize("hasRole('PATIENT')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'PATIENT')")
     public ResponseEntity<PatientResponse> getPatientByKeycloakId(@PathVariable String keycloakId, Authentication authentication) {
         PatientResponse patient = patientService.getPatientByKeycloakId(keycloakId, authentication);
         return ResponseEntity.ok(patient);
@@ -57,18 +60,41 @@ public class PatientController {
     }
 
     @PostMapping
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<PatientResponse> createPatient(@Valid @RequestBody PatientRequest request, Authentication authentication) {
         PatientResponse created = patientService.createPatient(request, authentication);
-        // Auto-assign PATIENT role in Keycloak for self-registering users
-        if (request.keycloakId() != null && !request.keycloakId().isBlank()) {
-            try {
-                keycloakAdminService.assignRealmRole(request.keycloakId(), "PATIENT");
-            } catch (Exception e) {
-                log.warn("Could not assign PATIENT role in Keycloak: {}", e.getMessage());
-            }
+        // An administrator may link the new record to an existing Keycloak account and grant it the role.
+        if (created.keycloakId() != null && !created.keycloakId().isBlank()) {
+            assignPatientRoleQuietly(created.keycloakId());
         }
         return new ResponseEntity<>(created, HttpStatus.CREATED);
+    }
+
+    /**
+     * Lets a signed-in user create their own patient profile.
+     * WHY: Separate from the admin endpoint above because the caller may not choose which Keycloak
+     * account the record binds to — the service takes that from the verified token.
+     */
+    @PostMapping("/self-register")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PatientResponse> selfRegisterPatient(@Valid @RequestBody PatientSelfRegistrationRequest request,
+                                                               Authentication authentication) {
+        PatientResponse created = patientService.selfRegister(request, authentication);
+        assignPatientRoleQuietly(created.keycloakId());
+        return new ResponseEntity<>(created, HttpStatus.CREATED);
+    }
+
+    /**
+     * Grants the PATIENT realm role, logging rather than failing if Keycloak is unreachable.
+     * WHY: The profile is already persisted at this point; an administrator can grant the role
+     * manually, so a Keycloak outage should not fail an otherwise successful registration.
+     */
+    private void assignPatientRoleQuietly(String keycloakId) {
+        try {
+            keycloakAdminService.assignRealmRole(keycloakId, "PATIENT");
+        } catch (Exception e) {
+            log.warn("Could not assign PATIENT role in Keycloak: {}", e.getMessage());
+        }
     }
 
     @PutMapping("/{id}")
@@ -107,10 +133,7 @@ public class PatientController {
     @PostMapping("/{id}/insurance")
     @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR')")
     public ResponseEntity<Void> recordInsurancePayment(@PathVariable Long id, @Valid @RequestBody InsurancePaymentRequest request, Authentication authentication) {
-        if (!id.equals(request.patientId())) {
-            throw new IllegalArgumentException("Path patient ID does not match request body patient ID");
-        }
-        insuranceService.recordPayment(request, authentication);
+        insuranceService.recordPayment(id, request, authentication);
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 }

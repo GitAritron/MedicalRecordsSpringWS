@@ -58,3 +58,6 @@ bin/
 .idea/**/target/
 .idea/**/out/
 .idea/**/build/
+
+# Windows/Git Bash artifact: "> nul" creates a real file here
+nul

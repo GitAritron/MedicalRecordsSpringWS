@@ -100,4 +100,56 @@ class ReportControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].patientName").value("Patient"));
     }
+
+    // ──────────────────────────────────────────────
+    // Pagination bounds
+    // ──────────────────────────────────────────────
+
+    /**
+     * page * size used to be computed as an int. These combinations overflow it to a negative
+     * offset, which slipped past the bounds guard and made subList throw — turning a query string
+     * into an HTTP 500. Past the end of the data the correct answer is simply an empty page.
+     */
+    @org.junit.jupiter.params.ParameterizedTest(name = "page={0} size={1}")
+    @org.junit.jupiter.params.provider.CsvSource({
+            "715827883, 3",
+            "2,          1073741824",
+            "2147483647, 2",
+            "1073741824, 4"
+    })
+    @WithMockUser(roles = "ADMIN")
+    void paginationOverflowReturnsEmptyPageNotServerError(int page, int size) throws Exception {
+        when(visitService.getMostCommonDiagnoses())
+                .thenReturn(List.of(new ReportDTO.DiagnosisCount("Flu", 10L)));
+
+        mockMvc.perform(get("/api/reports/diagnoses/common?page=" + page + "&size=" + size))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+    }
+
+    /** Negative inputs are clamped rather than rejected, matching the previous behaviour. */
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void negativePageAndSizeAreClamped() throws Exception {
+        when(visitService.getMostCommonDiagnoses())
+                .thenReturn(List.of(new ReportDTO.DiagnosisCount("Flu", 10L)));
+
+        mockMvc.perform(get("/api/reports/diagnoses/common?page=-5&size=-10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].diagnosisName").value("Flu"));
+    }
+
+    /** An unbounded page size is capped instead of returning the whole table in one response. */
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void oversizedPageIsCappedAtMaxPageSize() throws Exception {
+        List<ReportDTO.DiagnosisCount> many = java.util.stream.IntStream.range(0, 250)
+                .mapToObj(i -> new ReportDTO.DiagnosisCount("Diagnosis " + i, (long) i))
+                .toList();
+        when(visitService.getMostCommonDiagnoses()).thenReturn(many);
+
+        mockMvc.perform(get("/api/reports/diagnoses/common?page=0&size=100000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(ReportController.MAX_PAGE_SIZE));
+    }
 }

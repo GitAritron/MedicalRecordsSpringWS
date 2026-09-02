@@ -56,6 +56,28 @@ public class AuthorizationService {
         }
     }
 
+    /**
+     * Choosing a patient's general practitioner: the patient themselves, or an administrator.
+     * WHY separate from assertPatientCanAccessPatient: that check admits doctors, because doctors
+     * must be able to read every patient's record. Registering a patient with a GP is an
+     * administrative decision rather than a clinical one, so it is deliberately narrower — and
+     * stating it here keeps the service in step with the endpoint's @PreAuthorize instead of
+     * quietly permitting more than the controller does.
+     */
+    public void assertCanChangeGeneralPractitioner(Authentication authentication, Patient patient) {
+        requireAuthentication(authentication);
+        if (isAdmin(authentication)) {
+            return;
+        }
+        if (!isPatient(authentication)) {
+            throw new AccessDeniedException("Access denied");
+        }
+        String subject = extractSubject(authentication);
+        if (subject == null || !subject.equals(patient.getKeycloakId())) {
+            throw new AccessDeniedException("Patients can change only their own general practitioner");
+        }
+    }
+
     public void assertPatientCanAccessVisit(Authentication authentication, Visit visit) {
         requireAuthentication(authentication);
         if (isAdmin(authentication) || isDoctor(authentication)) {

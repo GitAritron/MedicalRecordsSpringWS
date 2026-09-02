@@ -53,16 +53,15 @@ public class VisitService {
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
 
+    /** Outer bounds for a plausible visit or sick-leave date; see validatePlausibleDate. */
+    static final int MAX_HISTORY_YEARS = 100;
+    static final int MAX_BOOKING_AHEAD_YEARS = 1;
+
     @Transactional(readOnly = true)
     public List<VisitResponse> getAllVisits() {
         return visitRepository.findAll().stream()
                 .map(VisitResponse::fromEntity)
                 .collect(Collectors.toList());
-    }
-
-    @Transactional(readOnly = true)
-    public VisitResponse getVisitById(Long id) {
-        return getVisitById(id, null);
     }
 
     /**
@@ -75,11 +74,6 @@ public class VisitService {
         Visit visit = findVisitById(id);
         authorizationService.assertPatientCanAccessVisit(authentication, visit);
         return VisitResponse.fromEntity(visit);
-    }
-
-    @Transactional
-    public VisitResponse createVisit(VisitRequest request) {
-        return createVisit(request, null);
     }
 
     /**
@@ -96,6 +90,7 @@ public class VisitService {
                 .orElseThrow(() -> new ResourceNotFoundException("Doctor not found with id: " + request.doctorId()));
 
         authorizationService.assertDoctorCanCreateVisit(authentication, doctor);
+        validatePlausibleDate(request.visitDate(), "Visit date");
 
         if (visitRepository.existsByDoctorIdAndVisitDateAndVisitTime(doctor.getId(), request.visitDate(), request.visitTime())) {
             throw new IllegalArgumentException("Doctor is already booked for this date and time");
@@ -118,6 +113,7 @@ public class VisitService {
     public VisitResponse updateVisit(Long id, VisitRequest request, Authentication authentication) {
         Visit existingVisit = findVisitById(id);
         authorizationService.assertDoctorCanModifyVisit(authentication, existingVisit);
+        validatePlausibleDate(request.visitDate(), "Visit date");
 
         Patient patient = patientRepository.findById(request.patientId())
                 .orElseThrow(() -> new ResourceNotFoundException("Patient not found with id: " + request.patientId()));
@@ -169,11 +165,6 @@ public class VisitService {
     }
 
     @Transactional(readOnly = true)
-    public List<VisitResponse> getVisitsByPatient(Long patientId) {
-        return getVisitsByPatient(patientId, null);
-    }
-
-    @Transactional(readOnly = true)
     public List<VisitResponse> getVisitsByPatient(Long patientId, Authentication authentication) {
         Patient patient = patientRepository.findById(patientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Patient not found with id: " + patientId));
@@ -200,11 +191,6 @@ public class VisitService {
     // ──────────────────────────────────────────────
     // Diagnosis CRUD
     // ──────────────────────────────────────────────
-
-    @Transactional
-    public DiagnosisResponse createDiagnosis(DiagnosisRequest request) {
-        return createDiagnosis(request, null);
-    }
 
     /**
      * Issues a diagnosis for a specific visit.
@@ -272,11 +258,6 @@ public class VisitService {
     // ──────────────────────────────────────────────
 
     @Transactional
-    public PrescriptionResponse createPrescription(PrescriptionRequest request) {
-        return createPrescription(request, null);
-    }
-
-    @Transactional
     public PrescriptionResponse createPrescription(PrescriptionRequest request, Authentication authentication) {
         Visit visit = findVisitById(request.visitId());
         authorizationService.assertDoctorCanModifyVisit(authentication, visit);
@@ -320,11 +301,6 @@ public class VisitService {
     // Sick Leave CRUD
     // ──────────────────────────────────────────────
 
-    @Transactional
-    public SickLeaveResponse createSickLeave(SickLeaveRequest request) {
-        return createSickLeave(request, null);
-    }
-
     /**
      * Issues a sick leave for a visit.
      * WHAT: Creates a sick leave record specifying the start date and duration.
@@ -335,6 +311,7 @@ public class VisitService {
     public SickLeaveResponse createSickLeave(SickLeaveRequest request, Authentication authentication) {
         Visit visit = findVisitById(request.visitId());
         authorizationService.assertDoctorCanModifyVisit(authentication, visit);
+        validatePlausibleDate(request.validFrom(), "Sick leave start date");
         SickLeave sickLeave = new SickLeave();
         sickLeave.setVisit(visit);
         sickLeave.setValidFrom(request.validFrom());
@@ -355,6 +332,7 @@ public class VisitService {
     public SickLeaveResponse updateSickLeave(Long id, SickLeaveRequest request, Authentication authentication) {
         SickLeave sickLeave = findSickLeaveById(id);
         authorizationService.assertDoctorCanModifyVisit(authentication, sickLeave.getVisit());
+        validatePlausibleDate(request.validFrom(), "Sick leave start date");
         sickLeave.setValidFrom(request.validFrom());
         sickLeave.setValidForDays(request.validForDays());
         SickLeave saved = sickLeaveRepository.save(sickLeave);
@@ -398,6 +376,25 @@ public class VisitService {
     // ──────────────────────────────────────────────
     // Internal helpers
     // ──────────────────────────────────────────────
+
+    /**
+     * Rejects dates that cannot plausibly describe a real clinical event.
+     * WHY: these dates are only @NotNull at the DTO level, which accepts the year 9999. Visits and
+     * sick leaves are legitimately dated both retrospectively and ahead, so neither @Past nor
+     * @Future fits; a bounded range is the honest rule. The limits are deliberately generous —
+     * they exist to catch typos and junk input, not to encode clinic policy.
+     */
+    private void validatePlausibleDate(LocalDate date, String label) {
+        LocalDate today = LocalDate.now();
+        if (date.isBefore(today.minusYears(MAX_HISTORY_YEARS))) {
+            throw new IllegalArgumentException(
+                    label + " cannot be more than " + MAX_HISTORY_YEARS + " years in the past");
+        }
+        if (date.isAfter(today.plusYears(MAX_BOOKING_AHEAD_YEARS))) {
+            throw new IllegalArgumentException(
+                    label + " cannot be more than " + MAX_BOOKING_AHEAD_YEARS + " year(s) in the future");
+        }
+    }
 
     private Visit findVisitById(Long id) {
         return visitRepository.findById(id)
