@@ -52,27 +52,27 @@ class DtoValidationTest {
 
     @Test
     void patientRequest_acceptsValidPayload() {
-        PatientRequest dto = new PatientRequest(null, "1234567890", "John", "Doe", 1L);
+        PatientRequest dto = new PatientRequest(null, "1234567890", "John", "Doe", 1L, null);
         assertTrue(validator.validate(dto).isEmpty());
     }
 
     /** patient.keycloak_id is VARCHAR(36). */
     @Test
     void patientRequest_rejectsOverLongKeycloakId() {
-        PatientRequest dto = new PatientRequest(repeat(37), "1234567890", "John", "Doe", 1L);
+        PatientRequest dto = new PatientRequest(repeat(37), "1234567890", "John", "Doe", 1L, null);
         assertTrue(violates(dto, "keycloakId"));
     }
 
     @Test
     void patientRequest_rejectsOverLongName() {
-        PatientRequest dto = new PatientRequest(null, "1234567890", repeat(101), "Doe", 1L);
+        PatientRequest dto = new PatientRequest(null, "1234567890", repeat(101), "Doe", 1L, null);
         assertTrue(violates(dto, "firstName"));
     }
 
     @Test
     void patientRequest_rejectsMalformedEgn() {
-        assertTrue(violates(new PatientRequest(null, "123", "John", "Doe", 1L), "egn"));
-        assertTrue(violates(new PatientRequest(null, "12345678ab", "John", "Doe", 1L), "egn"));
+        assertTrue(violates(new PatientRequest(null, "123", "John", "Doe", 1L, null), "egn"));
+        assertTrue(violates(new PatientRequest(null, "12345678ab", "John", "Doe", 1L, null), "egn"));
     }
 
     // ── Self-registration payloads cannot carry privileged fields ──────────

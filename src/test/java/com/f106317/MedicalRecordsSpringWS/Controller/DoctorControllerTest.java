@@ -51,7 +51,20 @@ class DoctorControllerTest {
     @MockitoBean
     private PatientService patientService;
 
-    private final DoctorResponse sampleDoctor = new DoctorResponse(1L, "kc-id-123", "John", "Doe", true, List.of());
+    @MockitoBean
+    private com.f106317.MedicalRecordsSpringWS.Service.AccountProvisioningService accountProvisioning;
+
+    /** See PatientControllerTest: default the provisioning outcome to "no account was asked for". */
+    @org.junit.jupiter.api.BeforeEach
+    void stubAccountProvisioning() {
+        when(accountProvisioning.provisionIfRequested(any(), any(), any(), any(), any()))
+                .thenReturn(com.f106317.MedicalRecordsSpringWS.Service
+                        .AccountProvisioningService.ProvisionedAccount.none());
+        // Deleting reads the record first, to learn which account to take the role back from.
+        when(doctorService.getDoctorById(any())).thenReturn(sampleDoctor);
+    }
+
+    private final DoctorResponse sampleDoctor = new DoctorResponse(1L, "kc-id-123", "John", "Doe", true, List.of(), null);
 
     /** Verifies GET /api/doctors returns a list of doctors for ADMIN users. */
     @Test

@@ -1,5 +1,7 @@
 {
   "realm": "medical-records",
+  "displayName": "MedicalRecords",
+  "loginTheme": "medical-records",
   "enabled": true,
   "registrationAllowed": true,
   "resetPasswordAllowed": false,
@@ -13,14 +15,17 @@
         "http://localhost:8080/*"
       ],
       "webOrigins": [
-        "*"
+        "http://localhost:8080"
       ],
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "frontchannelLogout": true
+      "frontchannelLogout": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
     }
   ],
   "roles": {

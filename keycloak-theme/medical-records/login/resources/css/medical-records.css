@@ -1,0 +1,525 @@
+/*
+ * MedicalRecords — Keycloak login theme.
+ *
+ * Repaints Keycloak's sign-in, registration, update-password, error and page-expired screens in the
+ * application's own dark glassmorphism, so signing in does not read as leaving the application.
+ * The tokens below are the same values as src/main/resources/static/style.css; keep the two in step.
+ *
+ * Loaded after PatternFly (PF3 + PF4, both shipped by the parent theme) and after the parent's
+ * login.css. PatternFly declares much of its styling through component-scoped custom properties and
+ * :hover/:focus rules that re-declare them, so overriding the plain property with !important is the
+ * only way to win reliably — hence the density of !important here. It is deliberate, not cargo cult.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
+:root {
+    --mr-primary: #4F46E5;
+    --mr-primary-hover: #4338CA;
+    --mr-text: #F8FAFC;
+    --mr-label: #CBD5E1;
+    --mr-muted: #94A3B8;
+    --mr-dim: #64748B;
+    --mr-glass-bg: rgba(30, 41, 59, 0.7);
+    --mr-glass-border: rgba(255, 255, 255, 0.1);
+    --mr-field-bg: #0F172A;
+    --mr-field-border: #334155;
+    --mr-field-border-hover: #475569;
+    --mr-focus: #38BDF8;
+    --mr-link: #60A5FA;
+    --mr-link-hover: #A78BFA;
+    --mr-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+    /* PatternFly resolves its own typography through these; setting them catches components that
+       never name a font-family of their own. */
+    --pf-global--FontFamily--sans-serif: var(--mr-font);
+    --pf-global--FontFamily--heading--sans-serif: var(--mr-font);
+    --pf-global--FontFamily--redhat-updated--sans-serif: var(--mr-font);
+    --pf-global--FontFamily--redhat-updated--heading--sans-serif: var(--mr-font);
+
+    /* Tells the browser to render native chrome — scrollbars, autofill, date pickers — for a dark
+       surface, the same way the application's forms do. */
+    color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------- page canvas */
+
+/*
+ * The parent theme paints keycloak-bg.png on the body, and its mobile breakpoint repaints it plain
+ * white. Both are replaced by the application's gradient — declared with !important so the narrow
+ * viewport rule cannot win it back.
+ *
+ * The gradient goes on <html>, not on <body>, because the parent pins `.login-pf body` to
+ * height: 100%: on a page taller than the viewport (registration) a body-painted background stops
+ * one screen down and the rest of the scroll shows bare canvas. Painting the root instead covers
+ * the whole page and the overscroll area with it.
+ */
+html.login-pf {
+    background: linear-gradient(135deg, #0F172A 0%, #1E1B4B 100%) !important;
+    background-attachment: fixed !important;
+    background-repeat: no-repeat !important;
+    min-height: 100%;
+}
+
+.login-pf body,
+body {
+    font-family: var(--mr-font) !important;
+    background: transparent !important;
+    color: var(--mr-text) !important;
+    height: auto !important;
+    min-height: 100vh;
+}
+
+.login-pf-page {
+    padding-bottom: 3rem;
+}
+
+/* ---------------------------------------------------------------- header brand */
+
+#kc-header {
+    color: var(--mr-text);
+}
+
+/*
+ * Matches header .logo in the application: the gradient-clipped wordmark, not Keycloak's spaced-out
+ * uppercase treatment.
+ */
+#kc-header-wrapper {
+    font-size: 1.75rem;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: normal;
+    padding: 3rem 1rem 1.5rem;
+}
+
+/* The brand arrives as Keycloak's logo markup (see messages_en.properties), which normally hides its
+   text behind a background image of the Keycloak logo. Undo that and show the words. */
+div.kc-logo-text {
+    background-image: none;
+    height: auto;
+    width: auto;
+    margin: 0 auto;
+}
+
+div.kc-logo-text span {
+    display: inline;
+    background: linear-gradient(to right, #60A5FA, #A78BFA);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* ---------------------------------------------------------------- card */
+
+/*
+ * The application's .glass-panel. overflow:hidden lets the accent bar and the footer band below sit
+ * flush against the rounded corners.
+ */
+.card-pf {
+    background: var(--mr-glass-bg) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--mr-glass-border) !important;
+    border-top: 1px solid var(--mr-glass-border) !important;   /* parent theme puts a 4px PF-blue bar here */
+    border-radius: 16px !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35) !important;
+    max-width: 440px;
+    overflow: hidden;
+    position: relative;
+    animation: mrFadeIn 0.5s ease-out;
+}
+
+/* The accent strip the application draws across the top of every .report-card. */
+.card-pf::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, var(--mr-primary), #a855f7);
+}
+
+@keyframes mrFadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------------------------------------------------------------- headings and copy */
+
+h1#kc-page-title {
+    color: var(--mr-text);
+    font-size: 1.3rem;
+    font-weight: 600;
+    text-align: center;
+    margin-top: 1rem;
+}
+
+#kc-content-wrapper,
+.login-pf-page .login-pf-signup {
+    color: var(--mr-label);
+}
+
+p.instruction,
+#kc-error-message .instruction,
+#kc-info-message .instruction {
+    color: var(--mr-label);
+    font-size: 0.95rem;
+    line-height: 1.6;
+}
+
+#kc-error-message,
+#kc-info-message {
+    text-align: center;
+}
+
+/* Shown above the form when a flow re-authenticates a known user. */
+#kc-username #kc-attempted-username,
+label#kc-attempted-username {
+    color: var(--mr-text);
+}
+
+.subtitle {
+    color: var(--mr-dim);
+}
+
+/* ---------------------------------------------------------------- fields */
+
+.form-group label,
+.pf-c-form__label,
+.pf-c-form__label-text {
+    color: var(--mr-label) !important;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 6px;
+}
+
+.pf-c-form-control,
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+input[type="tel"],
+select,
+textarea {
+    font-family: var(--mr-font) !important;
+    background-color: var(--mr-field-bg) !important;
+    background-image: none !important;
+    color: var(--mr-text) !important;
+    border: 1px solid var(--mr-field-border) !important;
+    border-radius: 8px !important;
+    padding: 0.55rem 0.85rem !important;
+    height: auto !important;
+    box-shadow: none !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pf-c-form-control::placeholder,
+input::placeholder {
+    color: var(--mr-dim) !important;
+}
+
+.pf-c-form-control:hover {
+    border-color: var(--mr-field-border-hover) !important;
+}
+
+.pf-c-form-control:focus,
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none !important;
+    border-color: var(--mr-focus) !important;
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15) !important;
+}
+
+/*
+ * Chrome paints autofilled fields with its own near-white background, which would leave a login form
+ * with two pale boxes on an otherwise dark card. The inset shadow is the standard way to repaint it.
+ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--mr-text) !important;
+    -webkit-box-shadow: 0 0 0 1000px var(--mr-field-bg) inset !important;
+    caret-color: var(--mr-text);
+}
+
+/* Password fields sit in an input group with a "show password" toggle; the two are styled as one
+   control so the button does not read as a separate white chip beside the field. */
+.pf-c-input-group {
+    background: transparent !important;
+}
+
+.pf-c-input-group > .pf-c-form-control {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-right: 0 !important;
+}
+
+.pf-c-input-group > .pf-c-button.pf-m-control {
+    background-color: var(--mr-field-bg) !important;
+    color: var(--mr-muted) !important;
+    border: 1px solid var(--mr-field-border) !important;
+    border-left: 0 !important;
+    border-radius: 0 8px 8px 0 !important;
+}
+
+.pf-c-input-group > .pf-c-button.pf-m-control:hover {
+    color: var(--mr-text) !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* PatternFly draws a focus underline through ::after on its control buttons. */
+.pf-c-button.pf-m-control::after {
+    border: 0 !important;
+}
+
+/* Per-field validation messages and the required-field marker. */
+.pf-c-form__helper-text.pf-m-error,
+.kc-feedback-text,
+#input-error,
+span[id^="input-error"] {
+    color: #FCA5A5 !important;
+}
+
+.required {
+    color: #F87171 !important;
+}
+
+/* ---------------------------------------------------------------- checkboxes */
+
+/* "Remember me" on sign-in, "Sign out from other devices" on the password update page. */
+.checkbox label,
+.pf-c-check__label,
+#kc-form-options .checkbox {
+    color: var(--mr-muted) !important;
+    font-weight: 400;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: var(--mr-primary);
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+.pf-c-button,
+.btn {
+    font-family: var(--mr-font) !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    transition: all 0.3s ease !important;
+}
+
+/* PatternFly renders button borders through ::after, which would outline our flat buttons. */
+.pf-c-button.pf-m-primary::after,
+.pf-c-button.pf-m-secondary::after {
+    border: 0 !important;
+}
+
+.pf-c-button.pf-m-primary,
+.btn-primary,
+input[type="submit"] {
+    background-color: var(--mr-primary) !important;
+    background-image: none !important;
+    color: #fff !important;
+    border: none !important;
+    padding: 0.65rem 1.5rem !important;
+}
+
+.pf-c-button.pf-m-primary:hover,
+.btn-primary:hover,
+input[type="submit"]:hover {
+    background-color: var(--mr-primary-hover) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3) !important;
+}
+
+/* Secondary actions — "Cancel" on an application-initiated action — match .btn-secondary. */
+.pf-c-button.pf-m-secondary,
+.btn-default {
+    background: transparent !important;
+    background-image: none !important;
+    border: 1px solid var(--mr-glass-border) !important;
+    color: var(--mr-text) !important;
+}
+
+.pf-c-button.pf-m-secondary:hover,
+.btn-default:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: var(--mr-text) !important;
+    transform: translateY(-2px);
+}
+
+#kc-form-buttons {
+    margin-top: 1.5rem;
+}
+
+/* ---------------------------------------------------------------- links */
+
+a,
+.login-pf a {
+    color: var(--mr-link) !important;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+a:hover,
+.login-pf a:hover {
+    color: var(--mr-link-hover) !important;
+    text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------- alerts */
+
+/*
+ * Feedback banners — "Invalid username or password", "Your account has been updated", and so on.
+ * Styled after the application's .account-note: a tinted wash inside a matching border.
+ */
+.pf-c-alert {
+    background-color: rgba(15, 23, 42, 0.6) !important;
+    border: 1px solid var(--mr-glass-border) !important;
+    border-radius: 8px !important;
+    color: var(--mr-text) !important;
+    padding: 0.7rem 0.9rem !important;
+    margin-bottom: 1rem;
+}
+
+.pf-c-alert::before {
+    display: none !important;   /* PF's coloured left rule, replaced by the tinted border below */
+}
+
+.pf-c-alert .pf-c-alert__title,
+.pf-c-alert .pf-c-alert__icon {
+    color: inherit !important;
+    font-size: 0.875rem;
+}
+
+.pf-c-alert.pf-m-danger {
+    background-color: rgba(239, 68, 68, 0.12) !important;
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: #FCA5A5 !important;
+}
+
+.pf-c-alert.pf-m-warning {
+    background-color: rgba(245, 158, 11, 0.1) !important;
+    border-color: rgba(245, 158, 11, 0.35) !important;
+    color: #FCD34D !important;
+}
+
+.pf-c-alert.pf-m-success {
+    background-color: rgba(16, 185, 129, 0.1) !important;
+    border-color: rgba(16, 185, 129, 0.35) !important;
+    color: #6EE7B7 !important;
+}
+
+.pf-c-alert.pf-m-info {
+    background-color: rgba(56, 189, 248, 0.1) !important;
+    border-color: rgba(56, 189, 248, 0.35) !important;
+    color: #7DD3FC !important;
+}
+
+/* ---------------------------------------------------------------- footer band */
+
+/*
+ * The "New user? Register" strip. The parent theme pulls it out to the card edges with negative
+ * margins and fills it light grey, which would cut a white bar across the bottom of the card.
+ */
+#kc-info-wrapper {
+    background-color: rgba(15, 23, 42, 0.55) !important;
+    border-top: 1px solid var(--mr-glass-border);
+    color: var(--mr-muted);
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+#kc-registration span,
+#kc-registration-container {
+    color: var(--mr-muted);
+}
+
+/* ---------------------------------------------------------------- locale picker */
+
+/* Inert while the realm is single-language, but the dropdown would otherwise open white-on-white. */
+#kc-locale ul {
+    background-color: #1E293B !important;
+    border: 1px solid var(--mr-glass-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#kc-locale-dropdown a,
+#kc-locale ul li a {
+    color: var(--mr-label) !important;
+}
+
+#kc-locale ul li a:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* ---------------------------------------------------------------- multi-factor / social lists */
+
+/* Only reachable if OTP or an identity provider is configured later; kept dark so a future flow
+   does not land on an unstyled white list. */
+.select-auth-box-parent {
+    border-top: 1px solid var(--mr-field-border) !important;
+}
+
+.select-auth-box-parent:hover {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+.select-auth-box-headline,
+#kc-form-webauthn .select-auth-box-headline {
+    color: var(--mr-text) !important;
+}
+
+.select-auth-box-desc,
+#kc-form-webauthn .select-auth-box-desc {
+    color: var(--mr-muted) !important;
+}
+
+.kc-social-gray,
+.kc-social-provider-name {
+    color: var(--mr-label) !important;
+}
+
+.pf-c-button.pf-m-control.kc-social-item {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid var(--mr-glass-border) !important;
+    border-radius: 8px !important;
+}
+
+/* ---------------------------------------------------------------- narrow viewports */
+
+@media (max-width: 767px) {
+    /* The parent theme drops the card to a full-bleed white sheet on phones. Keep the panel. */
+    .login-pf-page .card-pf {
+        max-width: none;
+        margin: 0 0.75rem;
+        padding: 1.5rem 1.25rem 2rem;
+        border: 1px solid var(--mr-glass-border) !important;
+        border-radius: 16px !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    #kc-header-wrapper {
+        color: var(--mr-text);
+        font-size: 1.4rem;
+        font-weight: 700;
+        letter-spacing: normal;
+        padding: 1.5rem 1rem 1rem;
+        text-align: center;
+    }
+
+    div.kc-logo-text {
+        width: auto;
+        height: auto;
+        background-size: auto;
+    }
+
+    #kc-info-wrapper {
+        border-top: 1px solid var(--mr-glass-border);
+        background-color: rgba(15, 23, 42, 0.55) !important;
+    }
+}

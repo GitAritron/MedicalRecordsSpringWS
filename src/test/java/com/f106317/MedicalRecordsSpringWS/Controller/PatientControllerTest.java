@@ -52,9 +52,24 @@ class PatientControllerTest {
     private InsuranceService insuranceService;
 
     @MockitoBean
-    private com.f106317.MedicalRecordsSpringWS.Service.KeycloakAdminService keycloakAdminService;
+    private com.f106317.MedicalRecordsSpringWS.Service.AccountProvisioningService accountProvisioning;
 
-    private final PatientResponse samplePatient = new PatientResponse(1L, null, "1234567890", "John", "Doe", 1L, "Dr. House MD");
+    /**
+     * These tests are about routing, authorization and response shape — not about Keycloak.
+     * The write paths ask the provisioning service whether an account was created, and a bare mock
+     * answers null, so the default here is "no account was asked for". Individual tests override it
+     * when the provisioning outcome is the thing under test.
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void stubAccountProvisioning() {
+        when(accountProvisioning.provisionIfRequested(any(), any(), any(), any(), any()))
+                .thenReturn(com.f106317.MedicalRecordsSpringWS.Service
+                        .AccountProvisioningService.ProvisionedAccount.none());
+        // Deleting reads the record first, to learn which account to take the role back from.
+        when(patientService.getPatientById(any(), any())).thenReturn(samplePatient);
+    }
+
+    private final PatientResponse samplePatient = new PatientResponse(1L, null, "1234567890", "John", "Doe", 1L, "Dr. House MD", null);
 
     /** Verifies GET /api/patients returns a list of patients for ADMIN users. */
     @Test

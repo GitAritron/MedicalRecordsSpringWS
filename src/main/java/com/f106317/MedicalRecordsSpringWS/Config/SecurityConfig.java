@@ -48,6 +48,16 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /**
+     * CORS for the single-page front end.
+     * <p>
+     * NOTE: this is inert as the application currently stands. Spring serves index.html, app.js and
+     * the API from the same origin (http://localhost:8080), so the browser makes no cross-origin
+     * request and no preflight ever reaches this configuration. It is kept, rather than deleted, so
+     * that serving the front end from its own origin later is a change to the list below and
+     * nothing else. The token endpoint at :8081 is a separate matter — Keycloak governs that
+     * through the client's own webOrigins, not through this bean.
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();

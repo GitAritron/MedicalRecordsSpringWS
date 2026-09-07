@@ -114,7 +114,7 @@ class DoctorServiceTest {
      */
     @Test
     void createDoctor() {
-        DoctorRequest request = new DoctorRequest(null, "John", "Doe", true, Set.of());
+        DoctorRequest request = new DoctorRequest(null, "John", "Doe", true, Set.of(), null);
         when(doctorRepository.save(any())).thenReturn(doctor);
         DoctorResponse response = doctorService.createDoctor(request, TestAuth.admin());
         assertNotNull(response);
@@ -128,7 +128,7 @@ class DoctorServiceTest {
      */
     @Test
     void updateDoctor() {
-        DoctorRequest request = new DoctorRequest(null, "Jane", "Smith", false, Set.of());
+        DoctorRequest request = new DoctorRequest(null, "Jane", "Smith", false, Set.of(), null);
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
         when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         DoctorResponse response = doctorService.updateDoctor(1L, request, TestAuth.admin());
@@ -337,5 +337,41 @@ class DoctorServiceTest {
 
         assertThrows(AccessDeniedException.class, () -> doctorService.selfRegister(request, null));
         verify(doctorRepository, never()).save(any());
+    }
+
+    // ──────────────────────────────────────────────
+    // Which Keycloak account a record belongs to
+    // ──────────────────────────────────────────────
+    // See PatientServiceTest for the reasoning: an absent field leaves the link alone, an empty
+    // one clears it, a value sets it.
+
+    @Test
+    void updateDoctor_absentKeycloakId_leavesTheLinkAlone() {
+        doctor.setKeycloakId("kc-existing");
+        DoctorRequest request = new DoctorRequest(null, "Jane", "Smith", true, Set.of(), null);
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertEquals("kc-existing", doctorService.updateDoctor(1L, request, TestAuth.admin()).keycloakId());
+    }
+
+    @Test
+    void updateDoctor_emptyKeycloakId_unlinksTheAccount() {
+        doctor.setKeycloakId("kc-existing");
+        DoctorRequest request = new DoctorRequest("", "Jane", "Smith", true, Set.of(), null);
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertNull(doctorService.updateDoctor(1L, request, TestAuth.admin()).keycloakId());
+    }
+
+    @Test
+    void updateDoctor_newKeycloakId_relinksTheAccount() {
+        doctor.setKeycloakId("kc-existing");
+        DoctorRequest request = new DoctorRequest("  kc-other  ", "Jane", "Smith", true, Set.of(), null);
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertEquals("kc-other", doctorService.updateDoctor(1L, request, TestAuth.admin()).keycloakId());
     }
 }

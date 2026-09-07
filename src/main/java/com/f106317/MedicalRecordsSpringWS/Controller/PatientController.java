@@ -1,11 +1,12 @@
 package com.f106317.MedicalRecordsSpringWS.Controller;
 
+import com.f106317.MedicalRecordsSpringWS.DTO.AccountCredentialsResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.InsurancePaymentRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientSelfRegistrationRequest;
+import com.f106317.MedicalRecordsSpringWS.Service.AccountProvisioningService;
 import com.f106317.MedicalRecordsSpringWS.Service.InsuranceService;
-import com.f106317.MedicalRecordsSpringWS.Service.KeycloakAdminService;
 import com.f106317.MedicalRecordsSpringWS.Service.PatientService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,8 +22,11 @@ import java.util.List;
 /**
  * REST Controller for managing Patient entities and health insurance verification.
  * WHAT: Exposes endpoints for CRUD operations and insurance checking.
- * WHY: Role-based access control (@PreAuthorize) ensures that Patients can only access 
+ * WHY: Role-based access control (@PreAuthorize) ensures that Patients can only access
  * their own data, while Doctors and Admins can query patient records.
+ * <p>
+ * The Keycloak calls live here rather than in {@link PatientService} because they are writes to a
+ * second system that no database transaction can undo — see {@link AccountProvisioningService}.
  */
 @RestController
 @RequestMapping("/api/patients")
@@ -30,9 +34,11 @@ import java.util.List;
 @Slf4j
 public class PatientController {
 
+    private static final String PATIENT_ROLE = "PATIENT";
+
     private final PatientService patientService;
     private final InsuranceService insuranceService;
-    private final KeycloakAdminService keycloakAdminService;
+    private final AccountProvisioningService accountProvisioning;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR')")
@@ -59,15 +65,24 @@ public class PatientController {
         return ResponseEntity.ok(patientService.getPatientById(id, authentication));
     }
 
+    /**
+     * Creates a patient record, optionally provisioning a Keycloak account for them.
+     * WHY the ordering: the account is created before the record, so that a Keycloak failure stops
+     * the write rather than reporting an account that does not exist. If the record save then
+     * fails, the stranded account holds no role — the grant happens afterwards — so it is inert.
+     */
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<PatientResponse> createPatient(@Valid @RequestBody PatientRequest request, Authentication authentication) {
-        PatientResponse created = patientService.createPatient(request, authentication);
-        // An administrator may link the new record to an existing Keycloak account and grant it the role.
-        if (created.keycloakId() != null && !created.keycloakId().isBlank()) {
-            assignPatientRoleQuietly(created.keycloakId());
-        }
-        return new ResponseEntity<>(created, HttpStatus.CREATED);
+        var account = accountProvisioning.provisionIfRequested(
+                request.username(), request.firstName(), request.lastName(),
+                null, request.keycloakId());
+
+        PatientRequest effective = account.created() ? request.withKeycloakId(account.keycloakId()) : request;
+        PatientResponse created = patientService.createPatient(effective, authentication);
+
+        accountProvisioning.grantRoleQuietly(created.keycloakId(), PATIENT_ROLE);
+        return new ResponseEntity<>(withPassword(created, account), HttpStatus.CREATED);
     }
 
     /**
@@ -80,27 +95,45 @@ public class PatientController {
     public ResponseEntity<PatientResponse> selfRegisterPatient(@Valid @RequestBody PatientSelfRegistrationRequest request,
                                                                Authentication authentication) {
         PatientResponse created = patientService.selfRegister(request, authentication);
-        assignPatientRoleQuietly(created.keycloakId());
+        accountProvisioning.grantRoleQuietly(created.keycloakId(), PATIENT_ROLE);
         return new ResponseEntity<>(created, HttpStatus.CREATED);
     }
 
     /**
-     * Grants the PATIENT realm role, logging rather than failing if Keycloak is unreachable.
-     * WHY: The profile is already persisted at this point; an administrator can grant the role
-     * manually, so a Keycloak outage should not fail an otherwise successful registration.
+     * Updates a patient, and keeps the Keycloak side in step.
+     * WHY the revoke: when the record is pointed at a different account — or unlinked entirely by
+     * clearing the field — the previous holder keeps the PATIENT role unless it is taken back.
      */
-    private void assignPatientRoleQuietly(String keycloakId) {
-        try {
-            keycloakAdminService.assignRealmRole(keycloakId, "PATIENT");
-        } catch (Exception e) {
-            log.warn("Could not assign PATIENT role in Keycloak: {}", e.getMessage());
-        }
-    }
-
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<PatientResponse> updatePatient(@PathVariable Long id, @Valid @RequestBody PatientRequest request, Authentication authentication) {
-        return ResponseEntity.ok(patientService.updatePatient(id, request, authentication));
+        String previousKeycloakId = patientService.getPatientById(id, authentication).keycloakId();
+
+        var account = accountProvisioning.provisionIfRequested(
+                request.username(), request.firstName(), request.lastName(),
+                previousKeycloakId, request.keycloakId());
+
+        PatientRequest effective = account.created() ? request.withKeycloakId(account.keycloakId()) : request;
+        PatientResponse updated = patientService.updatePatient(id, effective, authentication);
+
+        if (previousKeycloakId != null && !previousKeycloakId.equals(updated.keycloakId())) {
+            accountProvisioning.revokeRoleQuietly(previousKeycloakId, PATIENT_ROLE);
+        }
+        accountProvisioning.grantRoleQuietly(updated.keycloakId(), PATIENT_ROLE);
+
+        return ResponseEntity.ok(withPassword(updated, account));
+    }
+
+    /**
+     * Issues a fresh one-time password for the account behind this record.
+     * WHY: the password from provisioning is shown once and never stored, so without this an
+     * administrator who lost it before passing it on had to fall back to the Keycloak console.
+     */
+    @PostMapping("/{id}/reissue-password")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<AccountCredentialsResponse> reissuePassword(@PathVariable Long id, Authentication authentication) {
+        PatientResponse patient = patientService.getPatientById(id, authentication);
+        return ResponseEntity.ok(accountProvisioning.reissuePassword(patient.keycloakId()));
     }
 
     @PatchMapping("/{id}/gp")
@@ -109,10 +142,18 @@ public class PatientController {
         return ResponseEntity.ok(patientService.updatePatientGp(id, gpDoctorId, authentication));
     }
 
+    /**
+     * Deletes a patient record and takes back the PATIENT role.
+     * WHY the account itself survives: whether to delete, disable or merely de-role a person's
+     * identity is identity-provider policy. Removing the role is enough to stop the stale account
+     * reaching clinical data, without this application destroying an identity it does not own.
+     */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deletePatient(@PathVariable Long id, Authentication authentication) {
+        String keycloakId = patientService.getPatientById(id, authentication).keycloakId();
         patientService.deletePatient(id, authentication);
+        accountProvisioning.revokeRoleQuietly(keycloakId, PATIENT_ROLE);
         return ResponseEntity.noContent().build();
     }
 
@@ -135,5 +176,11 @@ public class PatientController {
     public ResponseEntity<Void> recordInsurancePayment(@PathVariable Long id, @Valid @RequestBody InsurancePaymentRequest request, Authentication authentication) {
         insuranceService.recordPayment(id, request, authentication);
         return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
+    /** Attaches the one-time password to the response, but only when an account was just created. */
+    private PatientResponse withPassword(PatientResponse response,
+                                         AccountProvisioningService.ProvisionedAccount account) {
+        return account.created() ? response.withTemporaryPassword(account.temporaryPassword()) : response;
     }
 }

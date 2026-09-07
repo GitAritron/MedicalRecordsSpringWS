@@ -12,18 +12,55 @@
     <div id="app">
         <header>
             <div class="logo">MedicalRecords</div>
-            <div class="user-info">
+            <!--
+              Signed in only. The Login and Register buttons that used to sit here appeared under
+              exactly the same condition as the landing page's own Sign in and Create an account —
+              never independently — so they were a duplicate pair competing with the real call to
+              action, and the header does not stick, so they did not survive scrolling either.
+            -->
+            <div class="user-info" id="userInfo" style="display: none;">
                 <span id="username" class="role-badge">Not logged in</span>
-                <button id="logoutBtn" style="display: none;" class="btn btn-secondary" onclick="logout()">Logout</button>
-                <button id="registerBtn" class="btn btn-secondary" onclick="register()">Register</button>
-                <button id="loginBtn" class="btn btn-primary" onclick="login()">Login</button>
+                <button id="logoutBtn" class="btn btn-secondary" onclick="logout()">Logout</button>
             </div>
         </header>
         <main>
+            <!--
+              The signed-out landing page. Deliberately a page rather than an immediate redirect to
+              Keycloak: with onLoad 'login-required' nobody could ever reach the application's own
+              front page, and signing out would bounce straight back into the login screen. Sign in
+              is one click from here, and the role summaries say what the system does.
+            -->
             <section id="hero" class="glass-panel">
-                <h1>Welcome to Medical Records</h1>
-                <p>Your centralized healthcare management portal.</p>
+                <h1>Medical Records</h1>
+                <p class="hero-lead">
+                    Patient histories, examinations, prescribed treatment and sick leave in one
+                    place — with everyone seeing exactly what their role allows.
+                </p>
+                <div class="hero-actions">
+                    <button class="btn btn-primary btn-large" onclick="login()">Sign in</button>
+                    <button class="btn btn-secondary btn-large" onclick="register()">Create an account</button>
+                </div>
+                <p class="hero-note">
+                    New here? Create an account, then tell us whether you are a patient or a doctor.
+                </p>
 
+                <div class="role-grid">
+                    <div class="role-card">
+                        <h3>Patients</h3>
+                        <p>Read your own history — every visit, diagnosis, prescription and sick
+                           leave — check your insurance status, and choose your GP.</p>
+                    </div>
+                    <div class="role-card">
+                        <h3>Doctors</h3>
+                        <p>Look up any patient or colleague, record the examinations you carry out,
+                           and issue prescriptions and sick leave.</p>
+                    </div>
+                    <div class="role-card">
+                        <h3>Administrators</h3>
+                        <p>Manage doctors and patients, grant portal access, approve new doctors,
+                           and run the practice-wide reports.</p>
+                    </div>
+                </div>
             </section>
             
             <section id="dashboard" class="glass-panel" style="display: none;">
@@ -47,25 +84,54 @@
             <form id="patientForm" method="dialog" onsubmit="submitPatientForm(event)">
                 <h3 id="patientModalTitle">Add/Edit Patient</h3>
                 <input type="hidden" id="patientId">
-                <input type="hidden" id="patientKeycloakId">
-                <div class="form-group">
-                    <label for="patientFirstName">First Name:</label>
-                    <input type="text" id="patientFirstName" required>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="patientFirstName">First Name:</label>
+                        <input type="text" id="patientFirstName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="patientLastName">Last Name:</label>
+                        <input type="text" id="patientLastName" required>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="patientLastName">Last Name:</label>
-                    <input type="text" id="patientLastName" required>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="patientEgn">EGN:</label>
+                        <input type="text" id="patientEgn" required pattern="\d{10}" title="Must be exactly 10 digits">
+                    </div>
+                    <div class="form-group">
+                        <label for="patientGpId">GP Doctor (Optional):</label>
+                        <select id="patientGpId">
+                            <option value="">-- No GP Assigned --</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="patientEgn">EGN:</label>
-                    <input type="text" id="patientEgn" required pattern="\d{10}" title="Must be exactly 10 digits">
-                </div>
-                <div class="form-group">
-                    <label for="patientGpId">GP Doctor (Optional):</label>
-                    <select id="patientGpId">
-                        <option value="">-- No GP Assigned --</option>
-                    </select>
-                </div>
+
+                <!--
+                  Portal access is optional on purpose: a patient who never uses the portal still
+                  needs their visits recorded, so a blank username records them with no account.
+                  Filling one in creates the Keycloak account and returns a one-time password.
+                -->
+                <fieldset class="account-fieldset">
+                    <legend>Portal access</legend>
+                    <p class="field-hint">Leave blank for a records-only patient. Fill in a username to create an account for them.</p>
+                    <div class="form-group">
+                        <label for="patientUsername">New account username:</label>
+                        <input type="text" id="patientUsername" autocomplete="off" placeholder="e.g. ipetrov" oninput="syncAccountFields('patient')">
+                    </div>
+                    <div class="form-group">
+                        <label for="patientKeycloakId">Existing account UUID:</label>
+                        <input type="text" id="patientKeycloakId" autocomplete="off" placeholder="Paste to link an account that already exists" oninput="syncAccountFields('patient')">
+                        <small class="field-hint">Prefilled when this record is linked. Clear it to unlink.</small>
+                    </div>
+                    <p id="patientAccountNote" class="field-hint account-note" style="display: none;">
+                        Already linked to an account — use <strong>Re-issue password</strong> below, or clear the UUID to create a new account instead.
+                    </p>
+                    <div id="patientAccountActions" style="display: none;">
+                        <button type="button" class="btn btn-secondary" onclick="reissuePassword('patients', 'patientId')">Re-issue password</button>
+                    </div>
+                </fieldset>
+
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('patientModal')">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save</button>
@@ -77,14 +143,15 @@
             <form id="doctorForm" method="dialog" onsubmit="submitDoctorForm(event)">
                 <h3 id="doctorModalTitle">Add/Edit Doctor</h3>
                 <input type="hidden" id="doctorId">
-                <input type="hidden" id="doctorKeycloakId">
-                <div class="form-group">
-                    <label for="doctorFirstName">First Name:</label>
-                    <input type="text" id="doctorFirstName" required>
-                </div>
-                <div class="form-group">
-                    <label for="doctorLastName">Last Name:</label>
-                    <input type="text" id="doctorLastName" required>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="doctorFirstName">First Name:</label>
+                        <input type="text" id="doctorFirstName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="doctorLastName">Last Name:</label>
+                        <input type="text" id="doctorLastName" required>
+                    </div>
                 </div>
                 <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
                     <label style="margin-bottom: 0;" for="doctorIsGp">Is General Practitioner (GP)?:</label>
@@ -96,6 +163,28 @@
                         <!-- Populated by JS -->
                     </div>
                 </div>
+
+                <!-- See the patient modal: same three-state link, same optional account. -->
+                <fieldset class="account-fieldset">
+                    <legend>Portal access</legend>
+                    <p class="field-hint">Leave blank for a records-only doctor. Fill in a username to create an account and grant the DOCTOR role.</p>
+                    <div class="form-group">
+                        <label for="doctorUsername">New account username:</label>
+                        <input type="text" id="doctorUsername" autocomplete="off" placeholder="e.g. givanov" oninput="syncAccountFields('doctor')">
+                    </div>
+                    <div class="form-group">
+                        <label for="doctorKeycloakId">Existing account UUID:</label>
+                        <input type="text" id="doctorKeycloakId" autocomplete="off" placeholder="Paste to link an account that already exists" oninput="syncAccountFields('doctor')">
+                        <small class="field-hint">Prefilled when this record is linked. Clear it to unlink.</small>
+                    </div>
+                    <p id="doctorAccountNote" class="field-hint account-note" style="display: none;">
+                        Already linked to an account — use <strong>Re-issue password</strong> below, or clear the UUID to create a new account instead.
+                    </p>
+                    <div id="doctorAccountActions" style="display: none;">
+                        <button type="button" class="btn btn-secondary" onclick="reissuePassword('doctors', 'doctorId')">Re-issue password</button>
+                    </div>
+                </fieldset>
+
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal('doctorModal')">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save</button>
@@ -248,6 +337,27 @@
                     <button type="submit" class="btn btn-primary">Record Payment</button>
                 </div>
             </form>
+        </dialog>
+
+        <!--
+          Shown once, immediately after an account is created or its password re-issued. The value
+          is never stored anywhere, so this dialog is the only place it appears — if it is lost,
+          the administrator re-issues rather than looking it up.
+        -->
+        <dialog id="credentialsModal" class="crud-modal">
+            <h3>Account ready</h3>
+            <p class="field-hint">
+                Pass these on through a secure channel. The password is shown <strong>once</strong>,
+                and the user must change it the first time they sign in.
+            </p>
+            <div class="form-group">
+                <label for="credentialsText">Credentials:</label>
+                <textarea id="credentialsText" readonly rows="3" style="width: 100%; font-family: monospace;"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="copyCredentials()">Copy</button>
+                <button type="button" class="btn btn-primary" onclick="closeModal('credentialsModal')">Done</button>
+            </div>
         </dialog>
 
     </div>

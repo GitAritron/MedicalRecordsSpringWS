@@ -21,11 +21,15 @@ function initKeycloak() {
         clientId: 'frontend-client'
     });
 
-    keycloak.init({ onLoad: 'check-sso', checkLoginIframe: false }).then(async authenticated => {
+    // pkceMethod S256: frontend-client is a public client, so it has no secret and Keycloak would
+    // otherwise exchange an authorization code for tokens for whoever presents it. The code travels
+    // in a redirect URL, where it can leak through history, a Referer header or an extension. PKCE
+    // binds the code to the browser that began the flow, so an intercepted one is useless. The
+    // realm sets pkce.code.challenge.method=S256 to refuse an exchange that arrives without a
+    // verifier — this side opts in, that side enforces it.
+    keycloak.init({ onLoad: 'check-sso', checkLoginIframe: false, pkceMethod: 'S256' }).then(async authenticated => {
         const usernameEl = document.getElementById('username');
-        const loginBtn = document.getElementById('loginBtn');
-        const registerBtn = document.getElementById('registerBtn');
-        const logoutBtn = document.getElementById('logoutBtn');
+        const userInfo = document.getElementById('userInfo');
         const heroSection = document.getElementById('hero');
         const dashboardSection = document.getElementById('dashboard');
 
@@ -35,9 +39,7 @@ function initKeycloak() {
             else if (keycloak.hasRealmRole('PATIENT')) currentUserRole = 'PATIENT';
 
             usernameEl.textContent = `${keycloak.tokenParsed.preferred_username} ${currentUserRole ? '('+currentUserRole+')' : '(New User)'}`;
-            loginBtn.style.display = 'none';
-            registerBtn.style.display = 'none';
-            logoutBtn.style.display = 'inline-block';
+            userInfo.style.display = 'flex';
             heroSection.style.display = 'none';
             dashboardSection.style.display = 'block';
 
@@ -51,10 +53,9 @@ function initKeycloak() {
                 loadDashboard();
             }
         } else {
-            usernameEl.textContent = 'Not logged in';
-            loginBtn.style.display = 'inline-block';
-            registerBtn.style.display = 'inline-block';
-            logoutBtn.style.display = 'none';
+            // Signed out the header is just the wordmark: the landing page carries the call to
+            // action, and a "Not logged in" badge tells the reader nothing that page does not.
+            userInfo.style.display = 'none';
             heroSection.style.display = 'block';
             dashboardSection.style.display = 'none';
         }
@@ -158,36 +159,67 @@ function setSearchVisible(visible) {
     }
 }
 
+/**
+ * What each role sees, in one order for everybody: their own view first, then the shared
+ * directories, then visits, then reports, and the administrator-only log last.
+ *
+ * WHY it is declared here rather than built per role: the three strips used to be assembled
+ * independently and had drifted apart — Doctors sat before Patients for an administrator and after
+ * them for a doctor, and Reports was the first tab for one role and the last for the other.
+ * Declaring the order once makes that kind of drift impossible.
+ *
+ * `landing: true` marks the screen the dashboard opens on. It is read by both renderTabs and
+ * loadDashboard, so the highlighted tab and the screen actually shown cannot disagree — which they
+ * would if the highlight were simply pinned to the first tab.
+ *
+ * Specification §2: "Лекарите трябва да могат да виждат информацията за всички пациенти и лекари."
+ * The API grants doctors the patient directory and the reports; these tabs are what make that
+ * permission reachable from the interface.
+ */
+const TABS_BY_ROLE = {
+    ADMIN: [
+        { label: 'Patients',   load: () => loadAllPatients() },
+        { label: 'Doctors',    load: () => loadDoctorsDirectory() },
+        { label: 'Visits',     load: () => loadDoctorVisits() },
+        { label: 'Reports',    load: () => loadFullReportsDashboard(), landing: true },
+        { label: 'Audit Logs', load: () => loadAuditLogs() }
+    ],
+    DOCTOR: [
+        { label: 'My Patients',  load: () => loadMyPatients(), landing: true },
+        { label: 'All Patients', load: () => loadAllPatients() },
+        { label: 'All Doctors',  load: () => loadDoctorsDirectory() },
+        { label: 'Visits',       load: () => loadDoctorVisits() },
+        { label: 'Reports',      load: () => loadFullReportsDashboard() }
+    ],
+    PATIENT: [
+        { label: 'My Medical History', load: () => loadPatientHistory(), landing: true },
+        { label: 'Doctors Directory',  load: () => loadDoctorsDirectory() }
+    ]
+};
+
 function renderTabs() {
     setSearchVisible(true);
     const navTabs = document.getElementById('nav-tabs');
-    let tabsHtml = '';
-    if (currentUserRole === 'ADMIN') {
-        tabsHtml += `<button class="tab-btn active" onclick="setActiveTab(this); loadFullReportsDashboard()">All Reports</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorsDirectory()">Doctors</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadAllPatients()">Patients</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorVisits()">Visits</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadAuditLogs()">Audit Logs</button>`;
-    } else if (currentUserRole === 'DOCTOR') {
-        // Specification §2: "Лекарите трябва да могат да виждат информацията за всички пациенти
-        // и лекари." The API already granted doctors the patient directory and the reports, but
-        // neither had a tab, so the permission was unreachable from the interface.
-        tabsHtml += `<button class="tab-btn active" onclick="setActiveTab(this); loadMyPatients()">My Patients</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadAllPatients()">All Patients</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorVisits()">Visits</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorsDirectory()">All Doctors</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadFullReportsDashboard()">Reports</button>`;
-    } else if (currentUserRole === 'PATIENT') {
-        tabsHtml += `<button class="tab-btn active" onclick="setActiveTab(this); loadPatientHistory()">My Medical History</button>`;
-        tabsHtml += `<button class="tab-btn" onclick="setActiveTab(this); loadDoctorsDirectory()">Doctors Directory</button>`;
-    }
-    navTabs.innerHTML = tabsHtml;
+    navTabs.innerHTML = '';
+
+    (TABS_BY_ROLE[currentUserRole] || []).forEach(tab => {
+        const button = document.createElement('button');
+        button.className = tab.landing ? 'tab-btn active' : 'tab-btn';
+        button.textContent = tab.label;
+        button.addEventListener('click', () => {
+            setActiveTab(button);
+            tab.load();
+        });
+        navTabs.appendChild(button);
+    });
 }
 
+/** Opens whichever screen the role's tab strip marks as its landing, so the two stay in step. */
 async function loadDashboard() {
-    if (currentUserRole === 'ADMIN') await loadFullReportsDashboard();
-    else if (currentUserRole === 'DOCTOR') await loadMyPatients();
-    else if (currentUserRole === 'PATIENT') await loadPatientHistory();
+    const landing = (TABS_BY_ROLE[currentUserRole] || []).find(tab => tab.landing);
+    if (landing) {
+        await landing.load();
+    }
 }
 
 // ================= NEW USER ROLE SELECTION =================
@@ -490,6 +522,10 @@ async function openAddPatientModal() {
     document.getElementById('patientForm').reset();
     document.getElementById('patientId').value = '';
     document.getElementById('patientKeycloakId').value = '';
+    document.getElementById('patientUsername').value = '';
+    // Nothing to re-issue for a record that does not exist yet.
+    document.getElementById('patientAccountActions').style.display = 'none';
+    syncAccountFields('patient');
     document.getElementById('patientModalTitle').innerText = 'Add New Patient';
 
     populateGpDropdown();
@@ -506,19 +542,29 @@ async function editPatient(id) {
     document.getElementById('patientFirstName').value = patient.firstName;
     document.getElementById('patientLastName').value = patient.lastName;
     document.getElementById('patientEgn').value = patient.egn;
+    // Blank on open: a username here means "create a new account", never "the current one".
+    document.getElementById('patientUsername').value = '';
+    document.getElementById('patientAccountActions').style.display = patient.keycloakId ? 'block' : 'none';
+    syncAccountFields('patient');
     document.getElementById('patientModalTitle').innerText = 'Edit Patient';
 
     populateGpDropdown(patient.gpDoctorId);
     openModal('patientModal');
 }
 
+/**
+ * Fills the GP dropdown.
+ * WHY only general practitioners: the server rejects a non-GP with "Doctor with id X is not a
+ * General Practitioner", so offering the rest was offering choices that could only ever fail.
+ * This now matches openChangeGpModal, which already filtered.
+ */
 function populateGpDropdown(selectedGpId = null) {
     const gpSelect = document.getElementById('patientGpId');
     gpSelect.innerHTML = '<option value="">-- No GP Assigned --</option>';
-    
-    doctorsList.forEach(doc => {
+
+    doctorsList.filter(doc => doc.isGP).forEach(doc => {
         const selected = (selectedGpId && doc.id === selectedGpId) ? 'selected' : '';
-        gpSelect.innerHTML += `<option value="${doc.id}" ${selected}>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)} ${doc.isGP ? '(GP)' : ''}</option>`;
+        gpSelect.innerHTML += `<option value="${doc.id}" ${selected}>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)} (GP)</option>`;
     });
 }
 
@@ -528,11 +574,15 @@ async function submitPatientForm(e) {
     const gpVal = document.getElementById('patientGpId').value;
 
     const patientData = {
-        keycloakId: document.getElementById('patientKeycloakId').value.trim() || null,
+        // Sent as-is rather than `|| null`: the server reads an absent field as "leave the link
+        // alone" and an empty string as "unlink", so collapsing empty to null would make clearing
+        // the box do nothing at all.
+        keycloakId: document.getElementById('patientKeycloakId').value.trim(),
         firstName: document.getElementById('patientFirstName').value.trim(),
         lastName: document.getElementById('patientLastName').value.trim(),
         egn: document.getElementById('patientEgn').value.trim(),
-        gpDoctorId: gpVal ? Number(gpVal) : null
+        gpDoctorId: gpVal ? Number(gpVal) : null,
+        username: document.getElementById('patientUsername').value.trim()
     };
 
     const method = id ? 'PUT' : 'POST';
@@ -543,8 +593,10 @@ async function submitPatientForm(e) {
         if (!response.ok) {
             throw new Error(await apiErrorMessage(response, `HTTP ${response.status}`));
         }
+        const saved = await response.json();
         closeModal('patientModal');
         loadAllPatients();
+        showCredentialsIfIssued(patientData.username, saved);
     } catch (err) { alert("Error saving patient: " + err.message); }
 }
 
@@ -564,14 +616,14 @@ async function loadAllPatients() {
         const response = await fetchWithAuth(`${API_BASE}/patients`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         patientsList = await response.json();
-        
+
         let html = `<h3>All Patients</h3>`;
         if (currentUserRole === 'ADMIN') {
             html += `<button class="btn btn-primary btn-add-new" onclick="openAddPatientModal()">+ Add New Patient</button>`;
         }
-        
+
         html += `<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th><th onclick="sortTable(2, this)">GP Doctor</th><th>Actions</th></tr></thead><tbody>`;
-        
+
         patientsList.forEach(p => {
             const safeName = esc(`${p.firstName} ${p.lastName}`);
             html += `<tr><td>${safeName}</td><td>${esc(p.egn)}</td><td>${esc(p.gpDoctorName || 'Not assigned')}</td>`;
@@ -600,6 +652,9 @@ async function openAddDoctorModal() {
     document.getElementById('doctorForm').reset();
     document.getElementById('doctorId').value = '';
     document.getElementById('doctorKeycloakId').value = '';
+    document.getElementById('doctorUsername').value = '';
+    document.getElementById('doctorAccountActions').style.display = 'none';
+    syncAccountFields('doctor');
     document.getElementById('doctorModalTitle').innerText = 'Add New Doctor';
 
     populateSpecsCheckboxes();
@@ -616,6 +671,10 @@ async function editDoctor(id) {
     document.getElementById('doctorFirstName').value = doctor.firstName;
     document.getElementById('doctorLastName').value = doctor.lastName;
     document.getElementById('doctorIsGp').checked = doctor.isGP;
+    // Blank on open: a username here means "create a new account", never "the current one".
+    document.getElementById('doctorUsername').value = '';
+    document.getElementById('doctorAccountActions').style.display = doctor.keycloakId ? 'block' : 'none';
+    syncAccountFields('doctor');
     document.getElementById('doctorModalTitle').innerText = 'Edit Doctor';
 
     populateSpecsCheckboxes(doctor.specializations);
@@ -629,7 +688,7 @@ function populateSpecsCheckboxes(assignedSpecs = []) {
         container.innerHTML = '<span style="font-size:0.85rem; color:#94a3b8;">No specializations available.</span>';
         return;
     }
-    
+
     specializationsList.forEach(spec => {
         const isChecked = assignedSpecs && assignedSpecs.some(s => (s === spec.name || s.name === spec.name || s.id === spec.id));
         container.innerHTML += `
@@ -648,11 +707,13 @@ async function submitDoctorForm(e) {
     const specIds = checkedBoxes.map(cb => Number(cb.value));
 
     const doctorData = {
-        keycloakId: document.getElementById('doctorKeycloakId').value.trim() || null,
+        // See submitPatientForm: empty means unlink, absent means leave alone.
+        keycloakId: document.getElementById('doctorKeycloakId').value.trim(),
         firstName: document.getElementById('doctorFirstName').value.trim(),
         lastName: document.getElementById('doctorLastName').value.trim(),
         isGP: document.getElementById('doctorIsGp').checked,
-        specializationIds: specIds
+        specializationIds: specIds,
+        username: document.getElementById('doctorUsername').value.trim()
     };
 
     const method = id ? 'PUT' : 'POST';
@@ -663,9 +724,75 @@ async function submitDoctorForm(e) {
         if (!response.ok) {
             throw new Error(await apiErrorMessage(response, `HTTP ${response.status}`));
         }
+        const saved = await response.json();
         closeModal('doctorModal');
         loadDoctorsDirectory();
+        showCredentialsIfIssued(doctorData.username, saved);
     } catch (err) { alert("Error saving doctor: " + err.message); }
+}
+
+// ================= ACCOUNT PROVISIONING =================
+
+/**
+ * Shows the one-time password when the server issued one.
+ * WHY it is driven off the response rather than the form: the server decides whether an account was
+ * actually created, and it declines in cases the form cannot see — an already-linked record, for
+ * instance. Rendering only when `temporaryPassword` comes back keeps the two in step.
+ */
+/**
+ * Keeps the portal-access controls consistent with what the server will actually accept.
+ * WHY: a record that is already linked cannot be given a second account — the server refuses it.
+ * Disabling the username box states that rule where the administrator can see it, instead of
+ * letting them fill the form in and meet a 400.
+ */
+function syncAccountFields(prefix) {
+    const usernameInput = document.getElementById(prefix + 'Username');
+    const linked = document.getElementById(prefix + 'KeycloakId').value.trim().length > 0;
+
+    usernameInput.disabled = linked;
+    if (linked) usernameInput.value = '';
+    document.getElementById(prefix + 'AccountNote').style.display = linked ? 'block' : 'none';
+}
+
+function showCredentialsIfIssued(username, saved) {
+    if (!saved || !saved.temporaryPassword) return;
+    showCredentials(`Username: ${username}`, saved.temporaryPassword);
+}
+
+/** @param accountLine identifies the account — always "Username: x", the value they sign in with. */
+function showCredentials(accountLine, password) {
+    document.getElementById('credentialsText').value =
+        `${accountLine}\nTemporary password: ${password}`;
+    openModal('credentialsModal');
+}
+
+function copyCredentials() {
+    const field = document.getElementById('credentialsText');
+    field.select();
+    navigator.clipboard.writeText(field.value).catch(() => {
+        // Clipboard access can be refused; the text is selected either way, so Ctrl+C still works.
+        console.warn('Clipboard write refused; text is selected for manual copying.');
+    });
+}
+
+/**
+ * Issues a fresh one-time password for the account behind a record.
+ * @param resource 'patients' or 'doctors'
+ * @param idFieldId the hidden input holding the record id in the open modal
+ */
+async function reissuePassword(resource, idFieldId) {
+    const id = document.getElementById(idFieldId).value;
+    if (!id) return;
+    if (!confirm('Issue a new temporary password? The current one stops working immediately.')) return;
+
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/${resource}/${id}/reissue-password`, { method: 'POST' });
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to re-issue password'));
+        const saved = await res.json();
+        // The username comes back from Keycloak, which is the only place it exists — the record
+        // stores just the account UUID, and it is the username the person signs in with.
+        showCredentials(`Username: ${saved.username}`, saved.temporaryPassword);
+    } catch (err) { alert(err.message); }
 }
 
 async function deleteDoctor(id) {
@@ -684,7 +811,7 @@ async function loadDoctorsDirectory() {
         const response = await fetchWithAuth(`${API_BASE}/doctors`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         doctorsList = await response.json();
-        
+
         let html = `<h3>Doctors Directory</h3>`;
         if (currentUserRole === 'ADMIN') {
             html += `<button class="btn btn-primary btn-add-new" onclick="openAddDoctorModal()">+ Add New Doctor</button> `;
@@ -740,7 +867,7 @@ async function openAddVisitModal() {
     const now = new Date();
     const today = now.toISOString().split('T')[0];
     const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-    
+
     document.getElementById('visitDate').value = today;
     document.getElementById('visitTime').value = timeStr;
 
@@ -1021,21 +1148,21 @@ async function loadDoctorVisits() {
         const response = await fetchWithAuth(`${API_BASE}/visits`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         visitsList = await response.json();
-        
+
         let html = '<h3>All Visits</h3>';
         if (currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR') {
             html += `<button class="btn btn-primary btn-add-new" onclick="openAddVisitModal()">+ Add New Visit</button>`;
         }
-        
+
         html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Patient</th><th onclick="sortTable(2, this)">Doctor</th><th onclick="sortTable(3, this)">Diagnosis</th><th onclick="sortTable(4, this)">Prescription</th>';
         if (currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR') html += `<th>Actions</th>`;
         html += `</tr></thead><tbody>`;
-        
+
         visitsList.forEach(v => {
             const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
             const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
             html += `<tr><td>${esc(fmtDate(v.visitDate))} ${esc(fmtTime(v.visitTime))}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td><td>${esc(rxNotes)}</td>`;
-            
+
             if (currentUserRole === 'ADMIN' || (currentUserRole === 'DOCTOR' && v.doctorId === currentDoctorId)) {
                 html += `<td>
                     <button class="action-btn btn-edit" onclick="editVisit(${v.id})">Edit</button>
@@ -1109,9 +1236,20 @@ async function loadPatientHistory() {
         if (!vResponse.ok) throw new Error(`HTTP ${vResponse.status}`);
         const visits = await vResponse.json();
 
-        const insBadge = insuranceStatus === true
-            ? `<span style="display:inline-block; padding: 0.25rem 0.75rem; background: rgba(16, 185, 129, 0.2); border: 1px solid #10B981; color: #10B981; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">✓ Health Insurance Active</span>`
-            : `<span style="display:inline-block; padding: 0.25rem 0.75rem; background: rgba(239, 68, 68, 0.2); border: 1px solid #EF4444; color: #EF4444; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">✕ Health Insurance Lapsed / Unpaid</span>`;
+        // Three states, not two. insuranceStatus stays null when the check could not be run, and
+        // reporting that as "Lapsed / Unpaid" told patients their contributions were unpaid on
+        // nothing more than a failed request.
+        const badge = (bg, border, colour, text) =>
+            `<span style="display:inline-block; padding: 0.25rem 0.75rem; background: ${bg}; border: 1px solid ${border}; color: ${colour}; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">${text}</span>`;
+
+        let insBadge;
+        if (insuranceStatus === true) {
+            insBadge = badge('rgba(16, 185, 129, 0.2)', '#10B981', '#10B981', '✓ Health Insurance Active');
+        } else if (insuranceStatus === false) {
+            insBadge = badge('rgba(239, 68, 68, 0.2)', '#EF4444', '#EF4444', '✕ Health Insurance Lapsed / Unpaid');
+        } else {
+            insBadge = badge('rgba(100, 116, 139, 0.2)', '#64748B', '#94A3B8', '? Insurance status unavailable');
+        }
 
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
             <div>
@@ -1185,7 +1323,7 @@ async function loadFullReportsDashboard() {
     if (currentUserRole === 'ADMIN') {
         pendingHtml = await renderPendingApprovals();
     }
-    
+
     let html = `
         <h3>Reports</h3>
         <p style="color: #94A3B8; margin-bottom: 1.5rem;">Select a report to run it against the current records.</p>
@@ -1449,12 +1587,12 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
 
     const resultsArea = document.getElementById('report-results');
     resultsArea.innerHTML = '<p style="color: #94A3B8;">Generating report...</p>';
-    
+
     try {
         const response = await fetchWithAuth(`${API_BASE}${endpoint}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        
+
         const rows = data.map(rowMapper);
         // Remember what is on screen so the export button below writes exactly that.
         lastReport = { title, headers, rows };
@@ -1514,7 +1652,7 @@ function sortTable(columnIndex, thElement) {
     const table = thElement.closest('table');
     const tbody = table.querySelector('tbody');
     const rows = Array.from(tbody.querySelectorAll('tr'));
-    
+
     const key = `${columnIndex}`;
     const ascending = !sortDirections[key];
     sortDirections[key] = ascending;

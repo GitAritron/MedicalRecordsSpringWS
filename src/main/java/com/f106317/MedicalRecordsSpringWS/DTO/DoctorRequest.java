@@ -23,5 +23,16 @@ public record DoctorRequest(
         String lastName,
         @JsonProperty("isGP") boolean isGP,
         @NotNull(message = "Specialization IDs are required")
-        Set<Long> specializationIds
-) {}
+        Set<Long> specializationIds,
+
+        // See PatientRequest: optional, and optional on purpose. A blank username records a doctor
+        // with no portal access; supplying one creates the Keycloak account and returns a one-time
+        // password for the administrator to hand over.
+        @Size(max = 255, message = "Username cannot exceed 255 characters")
+        String username
+) {
+    /** Copy of this request bound to a Keycloak account the application has just created. */
+    public DoctorRequest withKeycloakId(String newKeycloakId) {
+        return new DoctorRequest(newKeycloakId, firstName, lastName, isGP, specializationIds, username);
+    }
+}

@@ -63,3 +63,10 @@ tasks.jacocoTestCoverageVerification {
 		}
 	}
 }
+
+// The Jacoco plugin does not attach verification to `check` on its own, so the 0.60 minimum above
+// was configured but never evaluated — a threshold that could not fail. Wiring it up here makes
+// `./gradlew check` enforce it.
+tasks.check {
+	dependsOn(tasks.jacocoTestCoverageVerification)
+}

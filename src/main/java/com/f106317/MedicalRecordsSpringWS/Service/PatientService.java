@@ -110,6 +110,15 @@ public class PatientService {
         if (patientRepository.findByKeycloakId(subject).isPresent()) {
             throw new IllegalArgumentException("A patient profile already exists for this account");
         }
+        // Checked here rather than left to the EGN unique constraint: the constraint violation
+        // surfaces as a generic "duplicate or constraint violation" 409, which tells someone whose
+        // record an administrator already entered nothing about how to proceed. This is the common
+        // case, not an edge one, and the way out is a link rather than a second record.
+        if (patientRepository.existsByEgn(request.egn())) {
+            throw new IllegalArgumentException(
+                    "A patient record with this EGN already exists. "
+                    + "Ask an administrator to link it to your account.");
+        }
 
         Patient patient = new Patient();
         patient.setKeycloakId(subject);
@@ -137,13 +146,28 @@ public class PatientService {
 
         patient.setFirstName(request.firstName());
         patient.setLastName(request.lastName());
-        if (request.keycloakId() != null && !request.keycloakId().isBlank()) {
-            patient.setKeycloakId(request.keycloakId().trim());
-        }
+        applyAccountLink(patient, request.keycloakId());
         patient.setGp(resolveGpDoctor(request.gpDoctorId()));
         Patient saved = patientRepository.save(patient);
         auditLogService.log(authentication, "UPDATE", "Patient", saved.getId(), patientLabel(saved));
         return PatientResponse.fromEntity(saved);
+    }
+
+    /**
+     * Applies a change to which Keycloak account this record belongs to.
+     * WHAT: three states, because the field being absent and the field being empty mean different
+     * things — absent leaves the link alone, empty clears it, a value sets it.
+     * WHY the distinction: the administrator's form always sends the field, prefilled with the
+     * current value, so an empty box there is a deliberate unlink. An API caller sending a partial
+     * body omits the field entirely, and must not have the link silently torn out from under them.
+     * The caller is responsible for revoking the previous holder's realm role.
+     */
+    private void applyAccountLink(Patient patient, String requestedKeycloakId) {
+        if (requestedKeycloakId == null) {
+            return;
+        }
+        String trimmed = requestedKeycloakId.trim();
+        patient.setKeycloakId(trimmed.isEmpty() ? null : trimmed);
     }
 
     /**

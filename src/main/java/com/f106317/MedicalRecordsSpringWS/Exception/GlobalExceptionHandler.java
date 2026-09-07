@@ -79,6 +79,23 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(apiError, HttpStatus.BAD_REQUEST);
     }
 
+    /**
+     * A Keycloak username collision. Distinct from the generic Keycloak failure because it is the
+     * one an administrator can act on — they pick a different username and retry.
+     */
+    @ExceptionHandler(UsernameAlreadyExistsException.class)
+    public ResponseEntity<ApiError> handleUsernameAlreadyExists(UsernameAlreadyExistsException ex,
+                                                                HttpServletRequest request) {
+        ApiError apiError = new ApiError(
+                "USERNAME_TAKEN",
+                ex.getMessage(),
+                request.getRequestURI(),
+                Instant.now(),
+                Map.of()
+        );
+        return new ResponseEntity<>(apiError, HttpStatus.CONFLICT);
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> handleDataIntegrityViolation(DataIntegrityViolationException ex, HttpServletRequest request) {
         log.error("Data integrity violation at {}: {}", request.getRequestURI(), ex.getMessage());

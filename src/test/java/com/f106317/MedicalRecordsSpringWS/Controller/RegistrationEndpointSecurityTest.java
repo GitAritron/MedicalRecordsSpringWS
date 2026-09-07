@@ -5,7 +5,7 @@ import com.f106317.MedicalRecordsSpringWS.DTO.DoctorResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.Service.DoctorService;
 import com.f106317.MedicalRecordsSpringWS.Service.InsuranceService;
-import com.f106317.MedicalRecordsSpringWS.Service.KeycloakAdminService;
+import com.f106317.MedicalRecordsSpringWS.Service.AccountProvisioningService;
 import com.f106317.MedicalRecordsSpringWS.Service.PatientService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,7 +45,14 @@ class RegistrationEndpointSecurityTest {
     @MockitoBean private DoctorService doctorService;
     @MockitoBean private PatientService patientService;
     @MockitoBean private InsuranceService insuranceService;
-    @MockitoBean private KeycloakAdminService keycloakAdminService;
+    @MockitoBean private AccountProvisioningService accountProvisioning;
+
+    /** No account is provisioned in these tests; they are about who may reach the endpoint. */
+    @org.junit.jupiter.api.BeforeEach
+    void stubAccountProvisioning() {
+        when(accountProvisioning.provisionIfRequested(any(), any(), any(), any(), any()))
+                .thenReturn(AccountProvisioningService.ProvisionedAccount.none());
+    }
 
     /** Required by the OAuth2 resource server configured in SecurityConfig. */
     @MockitoBean private JwtDecoder jwtDecoder;
@@ -83,7 +90,7 @@ class RegistrationEndpointSecurityTest {
     @WithMockUser(roles = "ADMIN")
     void adminCanCreateDoctor() throws Exception {
         when(doctorService.createDoctor(any(), any()))
-                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", true, List.of()));
+                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", true, List.of(), null));
         mockMvc.perform(post("/api/doctors").contentType(MediaType.APPLICATION_JSON).content(DOCTOR_BODY))
                 .andExpect(status().isCreated());
     }
@@ -108,7 +115,7 @@ class RegistrationEndpointSecurityTest {
     @WithMockUser(roles = "ADMIN")
     void adminCanCreatePatient() throws Exception {
         when(patientService.createPatient(any(), any()))
-                .thenReturn(new PatientResponse(1L, null, "1234567890", "John", "Doe", null, null));
+                .thenReturn(new PatientResponse(1L, null, "1234567890", "John", "Doe", null, null, null));
         mockMvc.perform(post("/api/patients").contentType(MediaType.APPLICATION_JSON).content(PATIENT_BODY))
                 .andExpect(status().isCreated());
     }
@@ -119,7 +126,7 @@ class RegistrationEndpointSecurityTest {
     @WithMockUser
     void anySignedInUserMaySelfRegisterAsDoctor() throws Exception {
         when(doctorService.selfRegister(any(), any()))
-                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", false, List.of()));
+                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", false, List.of(), null));
         mockMvc.perform(post("/api/doctors/self-register")
                         .contentType(MediaType.APPLICATION_JSON).content(DOCTOR_SELF_BODY))
                 .andExpect(status().isCreated());
@@ -129,7 +136,7 @@ class RegistrationEndpointSecurityTest {
     @WithMockUser
     void anySignedInUserMaySelfRegisterAsPatient() throws Exception {
         when(patientService.selfRegister(any(), any()))
-                .thenReturn(new PatientResponse(1L, "kc-1", "1234567890", "John", "Doe", null, null));
+                .thenReturn(new PatientResponse(1L, "kc-1", "1234567890", "John", "Doe", null, null, null));
         mockMvc.perform(post("/api/patients/self-register")
                         .contentType(MediaType.APPLICATION_JSON).content(PATIENT_BODY))
                 .andExpect(status().isCreated());

@@ -96,7 +96,7 @@ class PatientServiceTest {
     /** Verifies a patient is created with the correct GP association. */
     @Test
     void createPatient_success() {
-        PatientRequest request = new PatientRequest(null, "1234567890", "John", "Doe", 1L);
+        PatientRequest request = new PatientRequest(null, "1234567890", "John", "Doe", 1L, null);
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
         when(patientRepository.save(any())).thenReturn(patient);
         
@@ -107,7 +107,7 @@ class PatientServiceTest {
     /** Verifies that updating a patient changes the persisted fields. */
     @Test
     void updatePatient_success() {
-        PatientRequest request = new PatientRequest(null, "1234567890", "Jane", "Smith", 1L);
+        PatientRequest request = new PatientRequest(null, "1234567890", "Jane", "Smith", 1L, null);
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
         when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -139,7 +139,7 @@ class PatientServiceTest {
     /** Verifies that EGN cannot be changed on update. */
     @Test
     void updatePatient_egnImmutable() {
-        PatientRequest request = new PatientRequest(null, "9999999999", "Jane", "Smith", 1L);
+        PatientRequest request = new PatientRequest(null, "9999999999", "Jane", "Smith", 1L, null);
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
         assertThrows(IllegalArgumentException.class, () -> patientService.updatePatient(1L, request, TestAuth.admin()));
     }
@@ -150,7 +150,7 @@ class PatientServiceTest {
         Doctor specialist = new Doctor();
         specialist.setId(2L);
         specialist.setGP(false);
-        PatientRequest request = new PatientRequest(null, "1234567890", "John", "Doe", 2L);
+        PatientRequest request = new PatientRequest(null, "1234567890", "John", "Doe", 2L, null);
         when(doctorRepository.findById(2L)).thenReturn(Optional.of(specialist));
         assertThrows(IllegalArgumentException.class, () -> patientService.createPatient(request, TestAuth.admin()));
     }
@@ -304,5 +304,72 @@ class PatientServiceTest {
 
         assertThrows(AccessDeniedException.class, () -> patientService.selfRegister(request, null));
         verify(patientRepository, never()).save(any());
+    }
+
+    /**
+     * Someone whose record an administrator already entered must be told what to do about it.
+     * WHY not left to the EGN unique constraint: that surfaces as a generic "duplicate or
+     * constraint violation" 409, which leaves them stuck with no role and no next step — the way
+     * out is an administrator linking the existing record, not a second one.
+     */
+    @Test
+    void selfRegister_whenEgnAlreadyRecorded_explainsHowToProceed() {
+        PatientSelfRegistrationRequest request =
+                new PatientSelfRegistrationRequest("1234567890", "John", "Doe", null);
+        when(patientRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.empty());
+        when(patientRepository.existsByEgn("1234567890")).thenReturn(true);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> patientService.selfRegister(request, TestAuth.patient("kc-sub-123")));
+
+        assertTrue(error.getMessage().contains("administrator"));
+        verify(patientRepository, never()).save(any());
+    }
+
+    // ──────────────────────────────────────────────
+    // Which Keycloak account a record belongs to
+    // ──────────────────────────────────────────────
+    // Three states, because an absent field and an empty one mean different things. The
+    // administrator's form always sends the field, prefilled, so an empty box there is a
+    // deliberate unlink — while an API caller sending a partial body omits it entirely and must
+    // not have the link torn out from under them.
+
+    @Test
+    void updatePatient_absentKeycloakId_leavesTheLinkAlone() {
+        patient.setKeycloakId("kc-existing");
+        PatientRequest request = new PatientRequest(null, "1234567890", "Jane", "Smith", 1L, null);
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PatientResponse response = patientService.updatePatient(1L, request, TestAuth.admin());
+
+        assertEquals("kc-existing", response.keycloakId());
+    }
+
+    @Test
+    void updatePatient_emptyKeycloakId_unlinksTheAccount() {
+        patient.setKeycloakId("kc-existing");
+        PatientRequest request = new PatientRequest("", "1234567890", "Jane", "Smith", 1L, null);
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PatientResponse response = patientService.updatePatient(1L, request, TestAuth.admin());
+
+        assertNull(response.keycloakId());
+    }
+
+    @Test
+    void updatePatient_newKeycloakId_relinksTheAccount() {
+        patient.setKeycloakId("kc-existing");
+        PatientRequest request = new PatientRequest("  kc-other  ", "1234567890", "Jane", "Smith", 1L, null);
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PatientResponse response = patientService.updatePatient(1L, request, TestAuth.admin());
+
+        assertEquals("kc-other", response.keycloakId());
     }
 }

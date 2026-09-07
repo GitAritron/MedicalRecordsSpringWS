@@ -263,6 +263,20 @@ curl -s -X POST "http://localhost:8081/realms/medical-records/protocol/openid-co
   -d "username=patient" -d "password=patient" | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])"
 ```
 
+> **This no longer works, by design.** The manual pass below was run and completed while
+> `directAccessGrantsEnabled` was true on `frontend-client`. It has since been set to `false`:
+> the password grant POSTs credentials straight to the token endpoint, bypassing the login page
+> and with it brute-force detection, required actions and MFA, and OAuth 2.1 removes the grant
+> altogether. The command above now returns `unauthorized_client`, which is the correct result.
+>
+> To re-run §5.1, temporarily set `"directAccessGrantsEnabled": true` on `frontend-client` in
+> `realm-export.json`, restart Keycloak, and set it back afterwards. Note that once Keycloak has a
+> persistent database, `--import-realm` only imports when the realm is absent, so the edit needs a
+> realm re-import or a change in the admin console to take effect.
+>
+> The automated suite is unaffected — `TestAuth` builds `JwtAuthenticationToken` instances directly
+> and never contacts Keycloak.
+
 Then, with `TOKEN` set to a **patient** token:
 
 | # | Request | Expect |

@@ -152,9 +152,7 @@ public class DoctorService {
         doctor.setFirstName(request.firstName());
         doctor.setLastName(request.lastName());
         doctor.setGP(request.isGP());
-        if (request.keycloakId() != null && !request.keycloakId().isBlank()) {
-            doctor.setKeycloakId(request.keycloakId().trim());
-        }
+        applyAccountLink(doctor, request.keycloakId());
         if (request.specializationIds() != null) {
             List<Specialization> specs = specializationRepository.findAllById(request.specializationIds());
             doctor.setSpecializations(new HashSet<>(specs));
@@ -162,6 +160,20 @@ public class DoctorService {
         Doctor saved = doctorRepository.save(doctor);
         auditLogService.log(authentication, "UPDATE", "Doctor", saved.getId(), doctorLabel(saved));
         return DoctorResponse.fromEntity(saved);
+    }
+
+    /**
+     * Applies a change to which Keycloak account this record belongs to.
+     * WHAT: three states — an absent field leaves the link alone, an empty one clears it, a value
+     * sets it. See {@code PatientService.applyAccountLink}; the reasoning is identical.
+     * The caller is responsible for revoking the previous holder's realm role.
+     */
+    private void applyAccountLink(Doctor doctor, String requestedKeycloakId) {
+        if (requestedKeycloakId == null) {
+            return;
+        }
+        String trimmed = requestedKeycloakId.trim();
+        doctor.setKeycloakId(trimmed.isEmpty() ? null : trimmed);
     }
 
     /**

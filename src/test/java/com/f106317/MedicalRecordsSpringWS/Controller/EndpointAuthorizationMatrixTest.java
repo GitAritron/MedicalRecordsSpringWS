@@ -5,7 +5,7 @@ import com.f106317.MedicalRecordsSpringWS.Service.AuditLogService;
 import com.f106317.MedicalRecordsSpringWS.Service.AuthorizationService;
 import com.f106317.MedicalRecordsSpringWS.Service.DoctorService;
 import com.f106317.MedicalRecordsSpringWS.Service.InsuranceService;
-import com.f106317.MedicalRecordsSpringWS.Service.KeycloakAdminService;
+import com.f106317.MedicalRecordsSpringWS.Service.AccountProvisioningService;
 import com.f106317.MedicalRecordsSpringWS.Service.PatientService;
 import com.f106317.MedicalRecordsSpringWS.Service.VisitService;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -56,7 +56,7 @@ class EndpointAuthorizationMatrixTest {
     @MockitoBean private VisitService visitService;
     @MockitoBean private InsuranceService insuranceService;
     @MockitoBean private AuditLogService auditLogService;
-    @MockitoBean private KeycloakAdminService keycloakAdminService;
+    @MockitoBean private AccountProvisioningService accountProvisioning;
 
     @MockitoBean private AuthorizationService authorizationService;
 

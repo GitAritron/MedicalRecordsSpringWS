@@ -23,5 +23,18 @@ public record PatientRequest(
         @NotBlank(message = "Last name is required")
         @Size(max = 100, message = "Last name cannot exceed 100 characters")
         String lastName,
-        Long gpDoctorId
-) {}
+        Long gpDoctorId,
+
+        // Supplying a username asks the application to create a Keycloak account for this person and
+        // return a one-time password. Deliberately optional: leaving it blank records a patient who
+        // simply has no portal access, which is a legitimate and common case. It must stay optional
+        // for a second reason — @PreAuthorize runs after body validation, so a required field here
+        // would turn the authorization tests' 403 cases into 400s.
+        @Size(max = 255, message = "Username cannot exceed 255 characters")
+        String username
+) {
+    /** Copy of this request bound to a Keycloak account the application has just created. */
+    public PatientRequest withKeycloakId(String newKeycloakId) {
+        return new PatientRequest(newKeycloakId, egn, firstName, lastName, gpDoctorId, username);
+    }
+}

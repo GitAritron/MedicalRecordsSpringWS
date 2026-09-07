@@ -276,19 +276,24 @@ h4 {
     background: #1E293B;
     color: var(--text-color);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    width: 400px;
-    max-width: 90%;
-    margin: auto;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    /* 400px was tight enough that every form scrolled. Wider, plus the paired fields below, gets
+       the patient and doctor forms onto one screen at a normal window height. */
+    width: 620px;
+    max-width: 92%;
     /*
-     * Centring on a fixed element pushes the top of a tall dialog above the viewport, where it
-     * cannot be reached or scrolled to. The visit dialog grows past that once its clinical-data
-     * section opens, so cap the height and let the dialog scroll internally instead.
+     * Centred by `inset: 0` plus `margin: auto`, and NOT by the top/left/transform idiom.
+     * WHY: the UA stylesheet already gives dialog:modal `inset: 0`. Setting only top and left
+     * leaves `bottom: 0` in place, so `margin: auto` centres the box inside the band between
+     * top:50% and the viewport foot — resolving to a negative margin-top for any dialog taller
+     * than that band — and the transform then centres it a second time. A tall dialog was landing
+     * ~106px above the viewport on a 706px-high window, unreachable and unscrollable.
+     * Letting the browser solve the centring against all four insets cannot overflow the top.
      */
-    max-height: 90vh;
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    /* Cap the height so a long form scrolls inside the dialog rather than growing past the screen. */
+    max-height: 90dvh;
     overflow-y: auto;
 }
 
@@ -510,4 +515,190 @@ h4 {
 .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+/* Portal-access section inside the patient and doctor modals. Set apart from the clinical fields
+   because it writes to Keycloak rather than to the medical record. */
+.account-fieldset {
+    border: 1px solid var(--glass-border, #334155);
+    border-radius: 10px;
+    padding: 0.9rem 1rem 0.4rem;
+    margin: 1.25rem 0 0.5rem;
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.account-fieldset legend {
+    padding: 0 0.5rem;
+    color: #38BDF8;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.field-hint {
+    display: block;
+    color: #64748B;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    margin: 0 0 0.75rem;
+}
+
+.form-group .field-hint {
+    margin: 0.3rem 0 0;
+}
+
+#credentialsText {
+    background: #0F172A;
+    color: #E2E8F0;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 0.6rem;
+    resize: vertical;
+}
+
+/* Shown when a record already has an account, so the refusal is visible before submitting. */
+.account-note {
+    color: #F59E0B;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 8px;
+    padding: 0.5rem 0.7rem;
+    margin: 0 0 0.75rem;
+}
+
+.crud-modal input:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ── Signed-out landing page ─────────────────────────────────────────────── */
+
+#hero {
+    text-align: center;
+}
+
+#hero h1 {
+    font-size: 2.4rem;
+    background: linear-gradient(to right, #60A5FA, #A78BFA);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.75rem;
+}
+
+.hero-lead {
+    color: #94A3B8;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    max-width: 40rem;
+    margin: 0 auto 1.75rem;
+}
+
+.hero-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.hero-note {
+    color: #64748B;
+    font-size: 0.85rem;
+    margin-top: 1rem;
+}
+
+.role-grid {
+    display: grid;
+    /* Three fixed columns rather than auto-fit: with exactly three cards, any min-width you pick
+       leaves a band of viewport widths where the third card drops onto a row by itself, which
+       reads as a mistake. Going straight from three to one at the existing breakpoint skips it. */
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-top: 2.5rem;
+    text-align: left;
+}
+
+.role-card {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 1.25rem;
+}
+
+.role-card h3 {
+    color: #38BDF8;
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+}
+
+.role-card p {
+    color: #94A3B8;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    margin: 0;
+}
+
+/* Landing-page responsive rules.
+   These live at the end of the file, after .role-grid is defined: an identical-specificity rule
+   inside the earlier @media block would be overridden by the later declaration at every width,
+   which is exactly what happened the first time. The sign-in buttons need no rule — .hero-actions
+   already wraps them. */
+@media (max-width: 768px) {
+    .role-grid { grid-template-columns: 1fr; }
+}
+
+/* Two short fields side by side, so the forms are shorter than the viewport instead of scrolling.
+   Collapses to a single column on small screens (rule at the end of this file). */
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 1rem;
+}
+
+/* Scrollbars, themed. The default light-grey bar sat badly against the dark surfaces — most
+   visibly inside a modal, which is the one place scrolling is routine. `scrollbar-color` covers
+   Firefox; the ::-webkit- rules cover Chrome and Edge. The thumb's border is the modal's own
+   background, which reads as padding and keeps the bar clear of the rounded corners. */
+html {
+    scrollbar-width: thin;
+    scrollbar-color: #475569 transparent;
+}
+
+.crud-modal {
+    scrollbar-width: thin;
+    scrollbar-color: #475569 transparent;
+}
+
+.crud-modal::-webkit-scrollbar,
+html::-webkit-scrollbar {
+    width: 12px;
+}
+
+.crud-modal::-webkit-scrollbar-track,
+html::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.crud-modal::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 999px;
+    border: 3px solid #1E293B;
+}
+
+html::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 999px;
+    border: 3px solid #0F172A;
+}
+
+.crud-modal::-webkit-scrollbar-thumb:hover,
+html::-webkit-scrollbar-thumb:hover {
+    background: #64748B;
+}
+
+/* 600px, not the 768px used elsewhere: the modal is `min(620px, 92vw)`, so two columns still fit
+   comfortably well below the tablet breakpoint. Collapsing at 768 stacked the fields on windows
+   that had ample room for them. Below ~610px the modal itself is narrow enough to want one. */
+@media (max-width: 600px) {
+    .form-row { grid-template-columns: 1fr; }
 }

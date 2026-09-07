@@ -12,7 +12,14 @@ public record DoctorResponse(
         String firstName,
         String lastName,
         @JsonProperty("isGP") boolean isGP,
-        List<SpecializationResponse> specializations
+        List<SpecializationResponse> specializations,
+
+        /**
+         * Set only on the response to a request that created or reset a Keycloak account, so the
+         * administrator can pass it on. Never persisted and never populated by {@link #fromEntity},
+         * so ordinary reads always carry null.
+         */
+        String temporaryPassword
 ) {
     public static DoctorResponse fromEntity(Doctor doctor) {
         List<SpecializationResponse> specs = doctor.getSpecializations() != null
@@ -26,7 +33,13 @@ public record DoctorResponse(
                 doctor.getFirstName(),
                 doctor.getLastName(),
                 doctor.isGP(),
-                specs
+                specs,
+                null
         );
+    }
+
+    /** Copy of this response carrying a freshly issued one-time password. */
+    public DoctorResponse withTemporaryPassword(String password) {
+        return new DoctorResponse(id, keycloakId, firstName, lastName, isGP, specializations, password);
     }
 }
