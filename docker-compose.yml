@@ -23,7 +23,9 @@ services:
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USERNAME:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-    command: start-dev --import-realm
+    # --health-enabled exposes /health/ready, which the healthcheck below probes. Without it that
+    # path 404s and the container reports "unhealthy" forever even though Keycloak is serving fine.
+    command: start-dev --import-realm --health-enabled=true
     ports:
       - "8081:8080"
     volumes:

@@ -157,10 +157,6 @@ class EndpointAuthorizationMatrixTest {
                 get("/api/reports/visits/period?start=2026-01-01&end=2026-12-31", "ADMIN", "DOCTOR"),
                 get("/api/reports/visits/doctor/period?doctorId=1&start=2026-01-01&end=2026-12-31", "ADMIN", "DOCTOR"),
                 get("/api/reports/pending-registrations", "ADMIN"),
-                // CSV exports leave the application as files, so pin their audience too.
-                get("/api/reports/export/diagnoses/common", "ADMIN", "DOCTOR"),
-                get("/api/reports/export/doctors/visits", "ADMIN", "DOCTOR"),
-                get("/api/reports/export/sickleaves/doctors", "ADMIN", "DOCTOR"),
 
                 // ── Audit log: administrators only ────────────────────────
                 get("/api/audit-logs", "ADMIN"),

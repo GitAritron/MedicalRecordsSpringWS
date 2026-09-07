@@ -4,6 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
@@ -85,5 +87,24 @@ class GlobalExceptionHandlerTest {
         ResponseEntity<ApiError> response = exceptionHandler.handleMessageNotReadable(ex, request);
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("MALFORMED_REQUEST", response.getBody().code());
+    }
+
+    /**
+     * A missing static file must be a 404, not a 500.
+     * WHY: Spring raises NoResourceFoundException for anything the resource handler cannot
+     * resolve — /favicon.ico, a mistyped .js or .css path. Without a dedicated handler it fell
+     * through to the catch-all and every ordinary 404 was reported as an internal server error
+     * with a stack trace in the log.
+     */
+    @Test
+    void handleNoResourceFound_returns404() {
+        HttpServletRequest request = new MockHttpServletRequest("GET", "/missing.js");
+        NoResourceFoundException ex =
+                new NoResourceFoundException(org.springframework.http.HttpMethod.GET, "/missing.js");
+
+        ResponseEntity<ApiError> response = exceptionHandler.handleNoResourceFound(ex, request);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertEquals("RESOURCE_NOT_FOUND", response.getBody().code());
     }
 }

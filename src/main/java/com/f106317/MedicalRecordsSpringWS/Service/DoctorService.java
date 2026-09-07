@@ -12,6 +12,7 @@ import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.SpecializationRepository;
+import com.f106317.MedicalRecordsSpringWS.Data.Repo.VisitRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ public class DoctorService {
 
     private final DoctorRepository doctorRepository;
     private final SpecializationRepository specializationRepository;
+    private final VisitRepository visitRepository;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
     private final KeycloakAdminService keycloakAdminService;
@@ -64,7 +66,7 @@ public class DoctorService {
             doctor.setSpecializations(new HashSet<>(specs));
         }
         Doctor saved = doctorRepository.save(doctor);
-        auditLogService.log(authentication, "CREATE", "Doctor", saved.getId());
+        auditLogService.log(authentication, "CREATE", "Doctor", saved.getId(), doctorLabel(saved));
         return DoctorResponse.fromEntity(saved);
     }
 
@@ -97,7 +99,7 @@ public class DoctorService {
         }
         Doctor saved = doctorRepository.save(doctor);
         auditLogService.log(authentication, AuditLogService.ACTION_SELF_REGISTER,
-                AuditLogService.ENTITY_DOCTOR, saved.getId());
+                AuditLogService.ENTITY_DOCTOR, saved.getId(), doctorLabel(saved));
         return DoctorResponse.fromEntity(saved);
     }
 
@@ -139,7 +141,7 @@ public class DoctorService {
         }
         keycloakAdminService.assignRealmRole(doctor.getKeycloakId(), "DOCTOR");
         auditLogService.log(authentication, AuditLogService.ACTION_APPROVE_DOCTOR,
-                AuditLogService.ENTITY_DOCTOR, doctor.getId());
+                AuditLogService.ENTITY_DOCTOR, doctor.getId(), doctorLabel(doctor));
         return DoctorResponse.fromEntity(doctor);
     }
 
@@ -158,16 +160,33 @@ public class DoctorService {
             doctor.setSpecializations(new HashSet<>(specs));
         }
         Doctor saved = doctorRepository.save(doctor);
-        auditLogService.log(authentication, "UPDATE", "Doctor", saved.getId());
+        auditLogService.log(authentication, "UPDATE", "Doctor", saved.getId(), doctorLabel(saved));
         return DoctorResponse.fromEntity(saved);
     }
 
-    /** Deletes a doctor by ID. Throws ResourceNotFoundException if not found. */
+    /**
+     * Deletes a doctor, provided they have no recorded visits.
+     * WHY the guard: visit.doctor_id is declared ON DELETE CASCADE, so removing a doctor makes the
+     * database silently delete their visits — and, cascading further, the diagnoses, prescriptions
+     * and sick leaves hanging off them. That erases patient medical history as a side effect of a
+     * staff record being removed, which contradicts the requirement to track each patient's
+     * history. The records describe the patient, not the practitioner, so we refuse instead.
+     * <p>
+     * Contrast with the GP relationship, which the schema already handles correctly: deleting a
+     * doctor merely sets patient.gp_doctor_id to NULL rather than deleting the patients.
+     */
     @Transactional
     public void deleteDoctor(Long id, Authentication authentication) {
         Doctor doctor = findDoctorById(id);
+        long recordedVisits = visitRepository.countByDoctorId(id);
+        if (recordedVisits > 0) {
+            throw new IllegalArgumentException(
+                    "Dr. " + doctor.getFirstName() + " " + doctor.getLastName() + " has "
+                    + recordedVisits + " recorded visit(s) and cannot be deleted, because that "
+                    + "would erase those patients' medical history");
+        }
         doctorRepository.delete(doctor);
-        auditLogService.log(authentication, "DELETE", "Doctor", id);
+        auditLogService.log(authentication, "DELETE", "Doctor", id, doctorLabel(doctor));
     }
 
     /** Report: retrieves all doctors with their total visit counts, ordered descending. */
@@ -226,6 +245,11 @@ public class DoctorService {
     }
 
     /** Internal helper: finds a Doctor entity or throws ResourceNotFoundException. */
+    /** Label used in the audit trail, e.g. "Dr. Georgi Ivanov". */
+    private static String doctorLabel(Doctor doctor) {
+        return "Dr. " + doctor.getFirstName() + " " + doctor.getLastName();
+    }
+
     Doctor findDoctorById(Long id) {
         return doctorRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Doctor not found with id: " + id));

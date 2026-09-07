@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action VARCHAR(50) NOT NULL,
     entity_type VARCHAR(50) NOT NULL,
     entity_id BIGINT NOT NULL,
+    -- Human-readable description of the record at the time of the action. Nullable because the
+    -- label is a convenience, and because it cannot always be derived (e.g. a deleted parent).
+    entity_label VARCHAR(150),
     created_at DATETIME NOT NULL
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

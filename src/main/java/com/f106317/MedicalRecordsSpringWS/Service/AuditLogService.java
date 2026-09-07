@@ -28,15 +28,34 @@ public class AuditLogService {
     private final AuditLogRepository auditLogRepository;
     private final AuthorizationService authorizationService;
 
+    /**
+     * Records one completed change.
+     * @param entityLabel a short human-readable description of the affected record — a patient's
+     *        name, a diagnosis, and so on. Stored rather than resolved when the log is read,
+     *        because entries routinely describe records that have since been deleted, and an id on
+     *        its own then names something nobody can look up. May be null where no sensible label
+     *        exists; the entry is still written.
+     */
     @Transactional
-    public void log(Authentication authentication, String action, String entityType, Long entityId) {
+    public void log(Authentication authentication, String action, String entityType,
+                    Long entityId, String entityLabel) {
         AuditLog log = new AuditLog();
         String actor = authorizationService.extractSubject(authentication);
         log.setActor(actor == null ? "system" : actor);
         log.setAction(action);
         log.setEntityType(entityType);
         log.setEntityId(entityId);
+        log.setEntityLabel(truncate(entityLabel));
         auditLogRepository.save(log);
+    }
+
+    /** Keeps the label inside the column width; the audit entry must never fail on its own field. */
+    private String truncate(String label) {
+        if (label == null) {
+            return null;
+        }
+        String trimmed = label.trim();
+        return trimmed.length() <= 150 ? trimmed : trimmed.substring(0, 147) + "...";
     }
 
     @Transactional(readOnly = true)

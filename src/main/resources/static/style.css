@@ -263,12 +263,19 @@ h4 {
 }
 
 /* Modal Styling */
+/*
+ * The modal follows the application's dark theme. It used to be near-white, which left every
+ * control inside it unreadable: the shared .btn-secondary (Cancel) is near-white text on a
+ * transparent background, and the clinical-data section is written with dark-theme colours
+ * (#E2E8F0 text, #334155 dividers) — all of which vanished against a white surface.
+ */
 .crud-modal {
-    border: none;
+    border: 1px solid var(--glass-border);
     border-radius: 12px;
     padding: 24px;
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    background: #1E293B;
+    color: var(--text-color);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
     width: 400px;
     max-width: 90%;
     margin: auto;
@@ -276,6 +283,13 @@ h4 {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
+    /*
+     * Centring on a fixed element pushes the top of a tall dialog above the viewport, where it
+     * cannot be reached or scrolled to. The visit dialog grows past that once its clinical-data
+     * section opens, so cap the height and let the dialog scroll internally instead.
+     */
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .crud-modal::backdrop {
@@ -283,23 +297,57 @@ h4 {
     backdrop-filter: blur(4px);
 }
 
+/* The clinical-data inputs sit outside .form-group, so style them on the modal itself. */
+.crud-modal input, .crud-modal select {
+    background: #0F172A;
+    color: var(--text-color);
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: 'Inter', sans-serif;
+    color-scheme: dark;
+}
+
+.crud-modal input::placeholder {
+    color: #64748B;
+}
+
 .form-group {
     margin-bottom: 16px;
 }
 
-.form-group label {
+/*
+ * .form-group is used both inside modals and in the self-registration forms rendered onto the
+ * dark dashboard, so these need to read on a dark surface in both places. The previous
+ * #4b5563 label was dark grey on dark slate in the registration forms.
+ */
+/* A <label> must reference one control; headings for a group of controls use .group-label. */
+.form-group label, .form-group .group-label {
     display: block;
     margin-bottom: 6px;
     font-weight: 600;
-    color: #4b5563;
+    color: #CBD5E1;
 }
 
 .form-group input, .form-group select {
     width: 100%;
     padding: 8px 12px;
-    border: 1px solid #d1d5db;
+    background: #0F172A;
+    color: var(--text-color);
+    border: 1px solid #334155;
     border-radius: 6px;
     font-family: 'Inter', sans-serif;
+    /* Renders the native date/time pickers and select arrows for a dark background. */
+    color-scheme: dark;
+}
+
+.form-group input::placeholder {
+    color: #64748B;
+}
+
+.form-group input:focus, .form-group select:focus {
+    outline: none;
+    border-color: #38BDF8;
 }
 
 .modal-actions {
@@ -355,6 +403,31 @@ h4 {
     opacity: 0.6;
     transition: opacity 0.3s ease;
 }
+
+/*
+ * The accent bar carries the report's subject, so the nine cards can be told apart at a glance
+ * and related ones read as a set. This replaces the decorative emoji that used to prefix each
+ * title — and unlike them it groups the reports rather than merely marking them.
+ */
+.report-card[data-group="diagnoses"]::before  { background: linear-gradient(90deg, #38BDF8, #0EA5E9); }
+.report-card[data-group="doctors"]::before    { background: linear-gradient(90deg, #10B981, #059669); }
+.report-card[data-group="sickleaves"]::before { background: linear-gradient(90deg, #F59E0B, #D97706); }
+.report-card[data-group="visits"]::before     { background: linear-gradient(90deg, #A855F7, #7C3AED); }
+
+.report-group {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #64748B;
+    margin-bottom: 0.35rem;
+}
+
+.report-card[data-group="diagnoses"]  .report-group { color: #38BDF8; }
+.report-card[data-group="doctors"]    .report-group { color: #10B981; }
+.report-card[data-group="sickleaves"] .report-group { color: #F59E0B; }
+.report-card[data-group="visits"]     .report-group { color: #A855F7; }
 
 .report-card:hover {
     transform: translateY(-4px);

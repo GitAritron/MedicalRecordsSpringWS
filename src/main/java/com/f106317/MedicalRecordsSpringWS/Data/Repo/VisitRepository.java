@@ -23,6 +23,9 @@ public interface VisitRepository extends JpaRepository<Visit, Long> {
 
     List<Visit> findByDoctorId(Long doctorId);
 
+    /** Used to refuse deleting a doctor whose visits would be cascade-removed with them. */
+    long countByDoctorId(Long doctorId);
+
     boolean existsByDoctorIdAndVisitDateAndVisitTime(Long doctorId, LocalDate visitDate, java.time.LocalTime visitTime);
 
     boolean existsByPatientIdAndVisitDateAndVisitTime(Long patientId, LocalDate visitDate, java.time.LocalTime visitTime);

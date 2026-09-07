@@ -43,6 +43,9 @@ function initKeycloak() {
 
             if (!currentUserRole) {
                 renderNewUserRoleSelection();
+            } else if (await isOrphanedAccount()) {
+                // Holds a role but the record behind it is gone — see renderNewUserRoleSelection.
+                renderNewUserRoleSelection();
             } else {
                 renderTabs();
                 loadDashboard();
@@ -87,6 +90,39 @@ function doctorNameById(doctorId) {
     return d ? `${d.firstName} ${d.lastName}` : `ID ${doctorId}`;
 }
 
+// ================= DATE FORMATTING =================
+// Every date shown to a user goes through these. The API speaks ISO (yyyy-mm-dd), which is right
+// for the wire and required by <input type="date">, but the interface previously rendered a mix
+// of raw ISO in tables and the browser's own locale format elsewhere — so the same screen could
+// show both 2026-07-01 and 7/1/2026. These render the Bulgarian convention, dd.mm.yyyy.
+// Note: never use these to populate an <input type="date">; that control requires ISO.
+
+/** "2026-07-01" (or an ISO datetime) -> "01.07.2026" */
+function fmtDate(value) {
+    if (!value) return '';
+    const [y, m, d] = String(value).slice(0, 10).split('-');
+    return (y && m && d) ? `${d}.${m}.${y}` : String(value);
+}
+
+/** "09:00:00" -> "09:00" */
+function fmtTime(value) {
+    return value ? String(value).slice(0, 5) : '';
+}
+
+/** ISO datetime -> "01.07.2026 14:30" */
+function fmtDateTime(value) {
+    if (!value) return '';
+    const dt = new Date(value);
+    if (isNaN(dt.getTime())) return String(value);
+    const p = n => String(n).padStart(2, '0');
+    return `${p(dt.getDate())}.${p(dt.getMonth() + 1)}.${dt.getFullYear()} ${p(dt.getHours())}:${p(dt.getMinutes())}`;
+}
+
+/** Year and month numbers -> "07.2026" */
+function fmtMonth(year, month) {
+    return `${String(month).padStart(2, '0')}.${year}`;
+}
+
 async function fetchWithAuth(url, options = {}) {
     try {
         await keycloak.updateToken(30);
@@ -107,7 +143,23 @@ function setActiveTab(clickedBtn) {
     clickedBtn.classList.add('active');
 }
 
+/**
+ * Shows or hides the header search box.
+ * WHY: it filters rows of .data-table, so on the registration and "awaiting approval" screens —
+ * which have no table — it is a control that cannot do anything.
+ */
+function setSearchVisible(visible) {
+    const bar = document.querySelector('.filter-bar');
+    if (!bar) return;
+    bar.style.display = visible ? '' : 'none';
+    if (!visible) {
+        const input = document.getElementById('searchInput');
+        if (input) input.value = '';
+    }
+}
+
 function renderTabs() {
+    setSearchVisible(true);
     const navTabs = document.getElementById('nav-tabs');
     let tabsHtml = '';
     if (currentUserRole === 'ADMIN') {
@@ -141,11 +193,39 @@ async function loadDashboard() {
 // ================= NEW USER ROLE SELECTION =================
 
 /**
+ * Whether the signed-in user holds a PATIENT or DOCTOR role with no matching record behind it.
+ *
+ * WHY this state exists: deleting a patient or doctor removes the clinical record only — the
+ * Keycloak identity and its realm role are deliberately left alone, because deciding whether to
+ * delete, disable or de-role an account is identity-provider policy, and doing it from here would
+ * mean a non-atomic write across two systems. The consequence is that such a user can still sign
+ * in. Without this check they were routed to a dashboard for a record that no longer exists and
+ * shown "Could not find your patient profile", with no way to recover: the registration screen
+ * only appears for users with no role, and they still have one.
+ *
+ * Treating them as unregistered lets them create a new profile, which is the recoverable outcome.
+ * Administrators are exempt — an ADMIN role is not backed by a patient or doctor record.
+ */
+async function isOrphanedAccount() {
+    if (currentUserRole !== 'PATIENT' && currentUserRole !== 'DOCTOR') return false;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/registration-status`);
+        if (!res.ok) return false;   // never strand a user because this check failed
+        const status = await res.json();
+        return currentUserRole === 'PATIENT' ? !status.hasPatientProfile : !status.hasDoctorProfile;
+    } catch (err) {
+        console.error('Could not read registration status', err);
+        return false;
+    }
+}
+
+/**
  * A user with no realm role has either not registered yet, or has applied as a doctor and is
  * waiting for approval. Distinguishing the two stops an applicant being shown the role picker
  * again on every sign-in, only to hit the duplicate-profile guard if they re-apply.
  */
 async function renderNewUserRoleSelection() {
+    setSearchVisible(false);
     const contentArea = document.getElementById('content-area');
     try {
         const res = await fetchWithAuth(`${API_BASE}/registration-status`);
@@ -178,18 +258,16 @@ async function renderNewUserRoleSelection() {
 
     contentArea.innerHTML = `
         <div style="max-width: 550px; margin: 2rem auto; text-align: center;">
-            <h3>Welcome, ${keycloak.tokenParsed.preferred_username}!</h3>
+            <h3>Welcome, ${esc(keycloak.tokenParsed.preferred_username)}!</h3>
             <p style="color: #94A3B8; margin-bottom: 2rem;">Please select your role to complete your profile setup.</p>
 
             <div style="display: flex; gap: 1.5rem; justify-content: center;">
                 <div class="report-card" style="flex: 1; text-align: center; cursor: pointer;" onclick="showPatientRegistrationForm()">
-                    <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">👤</div>
-                    <h4>I am a Patient</h4>
+                                        <h4>I am a Patient</h4>
                     <p>Register your patient profile to view medical visits, diagnoses, and prescriptions.</p>
                 </div>
                 <div class="report-card" style="flex: 1; text-align: center; cursor: pointer;" onclick="showDoctorRegistrationForm()">
-                    <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🩺</div>
-                    <h4>I am a Doctor</h4>
+                                        <h4>I am a Doctor</h4>
                     <p>Submit your doctor credentials for administrator review and activation.</p>
                 </div>
             </div>
@@ -199,37 +277,34 @@ async function renderNewUserRoleSelection() {
     `;
 }
 
+/**
+ * WHY no GP dropdown here: at this point the user holds no realm role, so the doctor directory
+ * returns 403 and the list would render empty — offering a choice the user cannot make. The GP is
+ * chosen straight afterwards from their own dashboard, which shows the unassigned state and a
+ * Choose GP button, and by then they hold the PATIENT role.
+ */
 async function showPatientRegistrationForm() {
-    await fetchDoctorsList();
-    const gpOptions = doctorsList
-        .filter(d => d.isGP)
-        .map(d => `<option value="${d.id}">Dr. ${esc(d.firstName)} ${esc(d.lastName)} (GP)</option>`)
-        .join('');
-
     const container = document.getElementById('selfRegContainer');
     container.innerHTML = `
         <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.5rem; border-radius: 12px;">
             <h4>Complete Patient Profile</h4>
             <form onsubmit="submitSelfPatientRegistration(event)">
                 <div class="form-group">
-                    <label>First Name:</label>
+                    <label for="selfFirstName">First Name:</label>
                     <input type="text" id="selfFirstName" value="${esc(keycloak.tokenParsed.given_name || '')}" required>
                 </div>
                 <div class="form-group">
-                    <label>Last Name:</label>
+                    <label for="selfLastName">Last Name:</label>
                     <input type="text" id="selfLastName" value="${esc(keycloak.tokenParsed.family_name || '')}" required>
                 </div>
                 <div class="form-group">
-                    <label>EGN (10 Digits):</label>
+                    <label for="selfEgn">EGN (10 Digits):</label>
                     <input type="text" id="selfEgn" required pattern="\\d{10}" title="Must be exactly 10 digits">
                 </div>
-                <div class="form-group">
-                    <label>General Practitioner (GP Doctor):</label>
-                    <select id="selfGpId" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
-                        <option value="">-- Select GP (Optional) --</option>
-                        ${gpOptions}
-                    </select>
-                </div>
+                <p style="color: #94A3B8; font-size: 0.85rem; margin: 0.75rem 0 0;">
+                    You will choose your general practitioner from your dashboard once registration
+                    is complete.
+                </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Complete Registration</button>
             </form>
         </div>
@@ -243,11 +318,11 @@ function showDoctorRegistrationForm() {
             <h4>Submit Doctor Application</h4>
             <form onsubmit="submitSelfDoctorRegistration(event)">
                 <div class="form-group">
-                    <label>First Name:</label>
+                    <label for="selfDocFirstName">First Name:</label>
                     <input type="text" id="selfDocFirstName" value="${esc(keycloak.tokenParsed.given_name || '')}" required>
                 </div>
                 <div class="form-group">
-                    <label>Last Name:</label>
+                    <label for="selfDocLastName">Last Name:</label>
                     <input type="text" id="selfDocLastName" value="${esc(keycloak.tokenParsed.family_name || '')}" required>
                 </div>
                 <p style="color: #94A3B8; font-size: 0.85rem; margin: 0.75rem 0 0;">
@@ -262,20 +337,19 @@ function showDoctorRegistrationForm() {
 
 async function submitSelfPatientRegistration(e) {
     e.preventDefault();
-    const gpVal = document.getElementById('selfGpId') ? document.getElementById('selfGpId').value : '';
     // No keycloakId: the server binds the profile to our verified token subject.
+    // No gpDoctorId: chosen from the dashboard once the PATIENT role has been granted.
     const patientData = {
         firstName: document.getElementById('selfFirstName').value.trim(),
         lastName: document.getElementById('selfLastName').value.trim(),
         egn: document.getElementById('selfEgn').value.trim(),
-        gpDoctorId: gpVal ? Number(gpVal) : null
+        gpDoctorId: null
     };
 
     try {
         const res = await fetchWithAuth(`${API_BASE}/patients/self-register`, { method: 'POST', body: JSON.stringify(patientData) });
         if (!res.ok) {
-            const errJson = await res.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
+            throw new Error(await apiErrorMessage(res, `HTTP ${res.status}`));
         }
         // Backend auto-assigns PATIENT role in Keycloak.
         // Force token refresh to pick up the new role, then reload the app.
@@ -295,7 +369,7 @@ async function submitSelfPatientRegistration(e) {
             const container = document.getElementById('selfRegContainer');
             container.innerHTML = `
                 <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10B981; color: #10B981; padding: 1.5rem; border-radius: 12px; text-align: center;">
-                    <h4>✅ Registration Complete!</h4>
+                    <h4>Registration complete</h4>
                     <p>Your patient profile has been created and approved. Please reload the page to access your dashboard.</p>
                     <button class="btn btn-primary" style="margin-top: 1rem;" onclick="location.reload()">Reload Now</button>
                 </div>
@@ -317,8 +391,7 @@ async function submitSelfDoctorRegistration(e) {
     try {
         const res = await fetchWithAuth(`${API_BASE}/doctors/self-register`, { method: 'POST', body: JSON.stringify(doctorData) });
         if (!res.ok) {
-            const errJson = await res.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
+            throw new Error(await apiErrorMessage(res, `HTTP ${res.status}`));
         }
         const container = document.getElementById('selfRegContainer');
         container.innerHTML = `
@@ -362,6 +435,7 @@ function closeModal(modalId) {
     if (modalId === 'visitModal') {
         document.getElementById('visitBasicFields').style.display = 'block';
         document.getElementById('clinicalDataSection').style.display = 'none';
+        document.getElementById('visitSummary').style.display = 'none';
         document.getElementById('diagnosisList').innerHTML = '';
         document.getElementById('prescriptionList').innerHTML = '';
         document.getElementById('sickLeaveDisplay').innerHTML = '';
@@ -392,8 +466,7 @@ async function submitSpecForm(e) {
             body: JSON.stringify({ name })
         });
         if (!res.ok) {
-            const errJson = await res.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
+            throw new Error(await apiErrorMessage(res, `HTTP ${res.status}`));
         }
         if (msgEl) {
             msgEl.innerHTML = `<p style="color: #10B981; margin: 0.5rem 0; font-weight: 500;">✓ Specialization "${esc(name)}" created successfully!</p>`;
@@ -468,8 +541,7 @@ async function submitPatientForm(e) {
     try {
         const response = await fetchWithAuth(url, { method, body: JSON.stringify(patientData) });
         if (!response.ok) {
-            const errJson = await response.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${response.status}`);
+            throw new Error(await apiErrorMessage(response, `HTTP ${response.status}`));
         }
         closeModal('patientModal');
         loadAllPatients();
@@ -480,7 +552,7 @@ async function deletePatient(id) {
     if (!confirm('Are you sure you want to delete this patient?')) return;
     try {
         const response = await fetchWithAuth(`${API_BASE}/patients/${id}`, { method: 'DELETE' });
-        if (!response.ok) throw new Error('Failed to delete patient');
+        if (!response.ok) throw new Error(await apiErrorMessage(response, 'Failed to delete patient'));
         loadAllPatients();
     } catch (err) { alert(err.message); }
 }
@@ -589,8 +661,7 @@ async function submitDoctorForm(e) {
     try {
         const response = await fetchWithAuth(url, { method, body: JSON.stringify(doctorData) });
         if (!response.ok) {
-            const errJson = await response.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${response.status}`);
+            throw new Error(await apiErrorMessage(response, `HTTP ${response.status}`));
         }
         closeModal('doctorModal');
         loadDoctorsDirectory();
@@ -601,7 +672,7 @@ async function deleteDoctor(id) {
     if (!confirm('Are you sure you want to delete this doctor?')) return;
     try {
         const response = await fetchWithAuth(`${API_BASE}/doctors/${id}`, { method: 'DELETE' });
-        if (!response.ok) throw new Error('Failed to delete doctor');
+        if (!response.ok) throw new Error(await apiErrorMessage(response, 'Failed to delete doctor'));
         loadDoctorsDirectory();
     } catch (err) { alert(err.message); }
 }
@@ -663,6 +734,7 @@ async function openAddVisitModal() {
     document.getElementById('visitModalTitle').innerText = 'Add New Visit';
     document.getElementById('visitBasicFields').style.display = 'block';
     document.getElementById('clinicalDataSection').style.display = 'none';
+    document.getElementById('visitSummary').style.display = 'none';
     currentEditVisitId = null;
 
     const now = new Date();
@@ -695,6 +767,9 @@ async function editVisit(id) {
     document.getElementById('visitTime').value = visit.visitTime;
     document.getElementById('visitModalTitle').innerText = 'Edit Visit';
     document.getElementById('visitBasicFields').style.display = 'block';
+    // Editing an existing visit shows the fields and the clinical data together, so the read-only
+    // recap is not needed — and must not linger from a previous create.
+    document.getElementById('visitSummary').style.display = 'none';
 
     populateVisitSelects(visit.patientId, visit.doctorId);
     // Also show clinical data for editing
@@ -760,17 +835,35 @@ async function submitVisitForm(e) {
     try {
         const response = await fetchWithAuth(url, { method, body: JSON.stringify(visitData) });
         if (!response.ok) {
-            const errJson = await response.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${response.status}`);
+            throw new Error(await apiErrorMessage(response, `HTTP ${response.status}`));
         }
         const savedVisit = await response.json();
         currentEditVisitId = savedVisit.id;
 
-        // Show clinical data section for adding diagnoses, prescriptions, sick leave
+        // Swap the form for a read-only recap, then open the clinical-data step.
         document.getElementById('visitBasicFields').style.display = 'none';
-        document.getElementById('visitModalTitle').innerText = `Visit #${savedVisit.id} — Add Clinical Data`;
+        document.getElementById('visitModalTitle').innerText = 'Clinical Data';
+        showVisitSummary(savedVisit);
         showClinicalDataSection(savedVisit);
     } catch (err) { alert("Error saving visit: " + err.message); }
+}
+
+/** Keeps the saved visit's who/when on screen while its clinical data is being entered. */
+function showVisitSummary(visit) {
+    const summary = document.getElementById('visitSummary');
+    document.getElementById('visitSummaryText').innerHTML =
+        `<strong>${esc(visit.patientName)}</strong> &nbsp;seen by&nbsp; <strong>Dr. ${esc(visit.doctorName)}</strong>`
+        + `<br><span style="color:#94A3B8;">${esc(fmtDate(visit.visitDate))} at ${esc(fmtTime(visit.visitTime))}`
+        + ` &middot; visit #${visit.id}</span>`;
+    summary.style.display = 'block';
+}
+
+/** Returns to the first step so the patient, doctor, date or time can be corrected. */
+function editVisitDetailsAgain() {
+    document.getElementById('visitSummary').style.display = 'none';
+    document.getElementById('clinicalDataSection').style.display = 'none';
+    document.getElementById('visitBasicFields').style.display = 'block';
+    document.getElementById('visitModalTitle').innerText = 'Edit Visit';
 }
 
 function showClinicalDataSection(visit) {
@@ -817,7 +910,7 @@ function renderExistingClinicalData(visit) {
     if (visit.sickLeave) {
         slDisplay.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(245, 158, 11, 0.1); border: 1px solid #92400E; padding: 0.4rem 0.75rem; border-radius: 8px;">
-                <span style="color: #E2E8F0;">From ${visit.sickLeave.validFrom} for ${visit.sickLeave.validForDays} days</span>
+                <span style="color: #E2E8F0;">From ${fmtDate(visit.sickLeave.validFrom)} for ${visit.sickLeave.validForDays} days</span>
                 <button type="button" onclick="removeSickLeave(${visit.sickLeave.id})" style="background: none; border: none; color: #EF4444; cursor: pointer; font-size: 1rem;">✕</button>
             </div>`;
         slForm.style.display = 'none';
@@ -845,7 +938,7 @@ async function addDiagnosisToVisit() {
         const res = await fetchWithAuth(`${API_BASE}/visits/diagnosis`, {
             method: 'POST', body: JSON.stringify({ visitId: currentEditVisitId, name })
         });
-        if (!res.ok) throw new Error('Failed to add diagnosis');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to add diagnosis'));
         input.value = '';
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
@@ -859,7 +952,7 @@ async function addPrescriptionToVisit() {
         const res = await fetchWithAuth(`${API_BASE}/visits/prescription`, {
             method: 'POST', body: JSON.stringify({ visitId: currentEditVisitId, note })
         });
-        if (!res.ok) throw new Error('Failed to add prescription');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to add prescription'));
         input.value = '';
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
@@ -874,8 +967,7 @@ async function addSickLeaveToVisit() {
             method: 'POST', body: JSON.stringify({ visitId: currentEditVisitId, validFrom, validForDays: Number(validForDays) })
         });
         if (!res.ok) {
-            const errJson = await res.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : 'Failed to issue sick leave');
+            throw new Error(await apiErrorMessage(res, 'Failed to issue sick leave'));
         }
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
@@ -884,7 +976,7 @@ async function addSickLeaveToVisit() {
 async function removeDiagnosis(id) {
     try {
         const res = await fetchWithAuth(`${API_BASE}/visits/diagnosis/${id}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Failed to remove diagnosis');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to remove diagnosis'));
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
 }
@@ -892,7 +984,7 @@ async function removeDiagnosis(id) {
 async function removePrescription(id) {
     try {
         const res = await fetchWithAuth(`${API_BASE}/visits/prescription/${id}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Failed to remove prescription');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to remove prescription'));
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
 }
@@ -900,7 +992,7 @@ async function removePrescription(id) {
 async function removeSickLeave(id) {
     try {
         const res = await fetchWithAuth(`${API_BASE}/visits/sickleave/${id}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Failed to remove sick leave');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to remove sick leave'));
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
 }
@@ -909,7 +1001,7 @@ async function deleteVisit(id) {
     if (!confirm('Are you sure you want to delete this visit?')) return;
     try {
         const response = await fetchWithAuth(`${API_BASE}/visits/${id}`, { method: 'DELETE' });
-        if (!response.ok) throw new Error('Failed to delete visit');
+        if (!response.ok) throw new Error(await apiErrorMessage(response, 'Failed to delete visit'));
         loadDoctorVisits();
     } catch (err) { alert(err.message); }
 }
@@ -935,13 +1027,14 @@ async function loadDoctorVisits() {
             html += `<button class="btn btn-primary btn-add-new" onclick="openAddVisitModal()">+ Add New Visit</button>`;
         }
         
-        html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Patient</th><th onclick="sortTable(2, this)">Doctor</th><th onclick="sortTable(3, this)">Diagnosis</th>';
+        html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Patient</th><th onclick="sortTable(2, this)">Doctor</th><th onclick="sortTable(3, this)">Diagnosis</th><th onclick="sortTable(4, this)">Prescription</th>';
         if (currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR') html += `<th>Actions</th>`;
         html += `</tr></thead><tbody>`;
         
         visitsList.forEach(v => {
             const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
-            html += `<tr><td>${esc(v.visitDate)} ${esc(v.visitTime)}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td>`;
+            const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
+            html += `<tr><td>${esc(fmtDate(v.visitDate))} ${esc(fmtTime(v.visitTime))}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td><td>${esc(rxNotes)}</td>`;
             
             if (currentUserRole === 'ADMIN' || (currentUserRole === 'DOCTOR' && v.doctorId === currentDoctorId)) {
                 html += `<td>
@@ -1023,11 +1116,13 @@ async function loadPatientHistory() {
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
             <div>
                 <h3 style="margin-bottom: 0.25rem;">Welcome, ${esc(patient.firstName)} ${esc(patient.lastName)}</h3>
-                <h4 style="color: #94A3B8; margin: 0;">EGN: ${esc(patient.egn)} | GP: ${esc(patient.gpDoctorName || 'Not assigned')}</h4>
+                <h4 style="color: #94A3B8; margin: 0;">EGN: ${esc(patient.egn)} | GP: ${patient.gpDoctorName
+                    ? esc(patient.gpDoctorName)
+                    : '<span style="color:#F59E0B; font-weight:600;">not chosen yet</span>'}</h4>
             </div>
             <div style="display:flex; gap:0.5rem; align-items:center;">
                 ${insBadge}
-                <button class="btn btn-secondary" style="padding: 0.35rem 0.8rem; font-size: 0.85rem;" onclick="openChangeGpModal(${patient.id}, ${patient.gpDoctorId || 'null'})">Change GP</button>
+                <button class="btn ${patient.gpDoctorId ? 'btn-secondary' : 'btn-primary'}" style="padding: 0.35rem 0.8rem; font-size: 0.85rem;" onclick="openChangeGpModal(${patient.id}, ${patient.gpDoctorId || 'null'})">${patient.gpDoctorId ? 'Change GP' : 'Choose GP'}</button>
             </div>
         </div>`;
 
@@ -1038,8 +1133,8 @@ async function loadPatientHistory() {
             visits.forEach(v => {
                 const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
                 const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
-                const slInfo = v.sickLeave ? `${esc(v.sickLeave.validFrom)} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
-                html += `<tr><td>${esc(v.visitDate)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
+                const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
+                html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });
             html += '</tbody></table>';
         }
@@ -1062,14 +1157,14 @@ async function renderPendingApprovals() {
         const rows = pending.map(d =>
             `<tr>
                 <td>Dr. ${esc(d.doctorName)}</td>
-                <td>${d.registeredAt ? esc(new Date(d.registeredAt).toLocaleDateString()) : '—'}</td>
+                <td>${d.registeredAt ? esc(fmtDate(d.registeredAt)) : '—'}</td>
                 <td><button class="action-btn" style="background:#10B981;color:white;" onclick="approveDoctor(${d.doctorId})">Approve</button></td>
             </tr>`
         ).join('');
 
         return `
             <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
-                <h4 style="color: #F59E0B; margin-bottom: 0.75rem;">🔔 Doctors Awaiting Approval (${pending.length})</h4>
+                <h4 style="color: #F59E0B; margin-bottom: 0.75rem;">Doctors Awaiting Approval (${pending.length})</h4>
                 <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">These people registered themselves as doctors. Approving grants them the <strong>DOCTOR</strong> role so they can sign in. Set GP status separately from the Doctors tab.</p>
                 <table class="data-table" style="margin-top: 0.5rem;">
                     <thead><tr><th>Name</th><th>Registered</th><th>Action</th></tr></thead>
@@ -1092,56 +1187,56 @@ async function loadFullReportsDashboard() {
     }
     
     let html = `
-        <h3>Full Analytical Reports Dashboard</h3>
-        <p style="color: #94A3B8; margin-bottom: 1.5rem;">Generate live analytical insights directly from system records.</p>
+        <h3>Reports</h3>
+        <p style="color: #94A3B8; margin-bottom: 1.5rem;">Select a report to run it against the current records.</p>
         
         ${pendingHtml}
 
         <div class="reports-grid">
-            <div class="report-card" onclick="fetchReport('/reports/diagnoses/common', 'Most Common Diagnoses', ['Diagnosis', 'Occurrences'], r => [r.diagnosisName, r.count])">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                    <h4>📊 1. Most Common Diagnoses</h4>
-                    <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="event.stopPropagation(); downloadCsv('/reports/export/diagnoses/common', 'most-common-diagnoses.csv')">CSV</button>
-                </div>
-                <p>List of diagnoses ordered by frequency.</p>
+            <div class="report-card" data-group="diagnoses" onclick="fetchReport('/reports/diagnoses/common', 'Most Common Diagnoses', ['Diagnosis', 'Occurrences'], r => [r.diagnosisName, r.count])">
+                <span class="report-group">Diagnoses</span>
+                <h4>1. Most Common Diagnoses</h4>
+                <p>Which conditions are diagnosed most often.</p>
             </div>
-            <div class="report-card" onclick="renderReportFilterPanel('diagnosis')">
-                <h4>🔍 2. Patients by Diagnosis</h4>
-                <p>Find all patients who have received a specific diagnosis.</p>
+            <div class="report-card" data-group="diagnoses" onclick="renderReportFilterPanel('diagnosis')">
+                <span class="report-group">Diagnoses</span>
+                <h4>2. Find Patients by Diagnosis</h4>
+                <p>Everyone who has received a particular diagnosis.</p>
             </div>
-            <div class="report-card" onclick="fetchReport('/reports/doctors/gp-patients', 'Patients per GP', ['Doctor ID', 'Doctor Name', 'Patients'], r => [r.doctorId, 'Dr. '+r.doctorName, r.patientCount])">
-                <h4>👥 3. GP Patient Counts</h4>
-                <p>Number of registered patients for each General Practitioner.</p>
+            <div class="report-card" data-group="doctors" onclick="fetchReport('/reports/doctors/gp-patients', 'Patients Registered per GP', ['Doctor ID', 'Doctor Name', 'Patients'], r => [r.doctorId, 'Dr. '+r.doctorName, r.patientCount])">
+                <span class="report-group">Doctors</span>
+                <h4>3. Patients Registered per GP</h4>
+                <p>How many patients each general practitioner looks after.</p>
             </div>
-            <div class="report-card" onclick="fetchReport('/reports/doctors/visits', 'Visits per Doctor', ['Doctor ID', 'Doctor Name', 'Visit Count'], r => [r.doctorId, 'Dr. '+r.doctorName, r.visitCount])">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                    <h4>🩺 4. Visit Count per Doctor</h4>
-                    <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="event.stopPropagation(); downloadCsv('/reports/export/doctors/visits', 'doctor-visits.csv')">CSV</button>
-                </div>
-                <p>Total number of medical visits handled by each doctor.</p>
+            <div class="report-card" data-group="doctors" onclick="fetchReport('/reports/doctors/visits', 'Visits Handled per Doctor', ['Doctor ID', 'Doctor Name', 'Visits'], r => [r.doctorId, 'Dr. '+r.doctorName, r.visitCount])">
+                <span class="report-group">Doctors</span>
+                <h4>4. Visits Handled per Doctor</h4>
+                <p>How many examinations each doctor has carried out.</p>
             </div>
-            <div class="report-card" onclick="fetchReport('/reports/sickleaves/doctors', 'Sick Leaves per Doctor', ['Doctor ID', 'Doctor Name', 'Sick Leaves Issued'], r => [r.doctorId, 'Dr. '+r.doctorName, r.sickLeaveCount])">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                    <h4>📜 5. Doctors Issuing Most Sick Leaves</h4>
-                    <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="event.stopPropagation(); downloadCsv('/reports/export/sickleaves/doctors', 'doctor-sickleaves.csv')">CSV</button>
-                </div>
-                <p>Doctors sorted by the number of sick leaves issued.</p>
+            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/doctors', 'Sick Leaves Issued per Doctor', ['Doctor ID', 'Doctor Name', 'Sick Leaves Issued'], r => [r.doctorId, 'Dr. '+r.doctorName, r.sickLeaveCount])">
+                <span class="report-group">Sick leaves</span>
+                <h4>5. Sick Leaves Issued per Doctor</h4>
+                <p>Which doctors issue the most sick leaves.</p>
             </div>
-            <div class="report-card" onclick="fetchReport('/reports/sickleaves/months', 'Sick Leaves per Month', ['Month', 'Sick Leaves Issued'], r => [r.month, r.sickLeaveCount])">
-                <h4>📅 6. Sick Leaves by Month</h4>
-                <p>Months with the highest number of sick leaves issued.</p>
+            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/months', 'Busiest Months for Sick Leaves', ['Month', 'Sick Leaves Issued'], r => [fmtMonth(r.year, r.month), r.count])">
+                <span class="report-group">Sick leaves</span>
+                <h4>6. Busiest Months for Sick Leaves</h4>
+                <p>The months of the year when most sick leaves were issued.</p>
             </div>
-            <div class="report-card" onclick="renderReportFilterPanel('dates')">
-                <h4>🗓️ 7. All Visits in Period</h4>
-                <p>Filter all medical visits across the system by a date range.</p>
+            <div class="report-card" data-group="visits" onclick="renderReportFilterPanel('dates')">
+                <span class="report-group">Visits</span>
+                <h4>7. All Visits in a Date Range</h4>
+                <p>Every visit across the practice between two dates.</p>
             </div>
-            <div class="report-card" onclick="renderReportFilterPanel('doctor_dates')">
-                <h4>👨‍⚕️ 8. Visits per Doctor in Period</h4>
-                <p>Filter medical visits for a specific doctor by a date range.</p>
+            <div class="report-card" data-group="visits" onclick="renderReportFilterPanel('doctor_dates')">
+                <span class="report-group">Visits</span>
+                <h4>8. One Doctor's Visits in a Date Range</h4>
+                <p>Visits carried out by a chosen doctor between two dates.</p>
             </div>
-            <div class="report-card" onclick="renderReportFilterPanel('patient_visits')">
-                <h4>📋 9. Visits for a Specific Patient</h4>
-                <p>Lookup medical visit history for a specific patient by name.</p>
+            <div class="report-card" data-group="visits" onclick="renderReportFilterPanel('patient_visits')">
+                <span class="report-group">Visits</span>
+                <h4>9. A Patient's Visit History</h4>
+                <p>The complete visit record for one patient.</p>
             </div>
         </div>
 
@@ -1165,7 +1260,7 @@ async function renderReportFilterPanel(type) {
             const diagRes = await fetchWithAuth(`${API_BASE}/reports/diagnoses/names`);
             if (diagRes.ok) {
                 const names = await diagRes.json();
-                diagOptions = names.map(n => `<option value="${n}">${n}</option>`).join('');
+                diagOptions = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
                 if (names.length === 0) diagOptions = '<option value="">No diagnoses found</option>';
             }
         } catch (e) { diagOptions = '<option value="">Error loading diagnoses</option>'; }
@@ -1175,7 +1270,7 @@ async function renderReportFilterPanel(type) {
                 <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Patients by Diagnosis</h4>
                 <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 220px;">
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">Select Diagnosis:</label>
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineDiagSelect">Select Diagnosis:</label>
                         <select id="inlineDiagSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
                             ${diagOptions}
                         </select>
@@ -1190,11 +1285,11 @@ async function renderReportFilterPanel(type) {
                 <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Visits in Date Range</h4>
                 <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">Start Date:</label>
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineStartDate">Start Date:</label>
                         <input type="date" id="inlineStartDate" value="2026-01-01" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
                     </div>
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">End Date:</label>
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineEndDate">End Date:</label>
                         <input type="date" id="inlineEndDate" value="${todayStr}" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
                     </div>
                     <button class="btn btn-primary" onclick="runDatesReport()">Generate Report</button>
@@ -1208,17 +1303,17 @@ async function renderReportFilterPanel(type) {
                 <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Visits by Doctor in Date Range</h4>
                 <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 200px;">
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">Select Doctor:</label>
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineDocSelect">Select Doctor:</label>
                         <select id="inlineDocSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
                             ${doctorsList.map(d => `<option value="${d.id}">Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`).join('')}
                         </select>
                     </div>
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">Start Date:</label>
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineStartDate">Start Date:</label>
                         <input type="date" id="inlineStartDate" value="2026-01-01" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
                     </div>
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">End Date:</label>
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineEndDate">End Date:</label>
                         <input type="date" id="inlineEndDate" value="${todayStr}" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
                     </div>
                     <button class="btn btn-primary" onclick="runDoctorDatesReport()">Generate Report</button>
@@ -1232,7 +1327,7 @@ async function renderReportFilterPanel(type) {
                 <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Visits for Patient</h4>
                 <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 240px;">
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;">Select Patient:</label>
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlinePatSelect">Select Patient:</label>
                         <select id="inlinePatSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
                             ${patientsList.map(p => `<option value="${p.id}">${esc(p.firstName)} ${esc(p.lastName)} (EGN: ${esc(p.egn)})</option>`).join('')}
                         </select>
@@ -1253,7 +1348,7 @@ function runDatesReport() {
     const start = document.getElementById('inlineStartDate').value;
     const end = document.getElementById('inlineEndDate').value;
     if (!start || !end) { alert('Please select both start and end dates.'); return; }
-    fetchReport(`/reports/visits/period?start=${start}&end=${end}`, `Visits from ${start} to ${end}`, ['Visit ID', 'Date', 'Doctor', 'Patient'], v => [v.id, v.visitDate + ' ' + (v.visitTime || ''), 'Dr. ' + v.doctorName, v.patientName], true);
+    fetchReport(`/reports/visits/period?start=${start}&end=${end}`, `Visits from ${fmtDate(start)} to ${fmtDate(end)}`, ['Visit ID', 'Date', 'Doctor', 'Patient'], v => [v.id, fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime), 'Dr. ' + v.doctorName, v.patientName], true);
 }
 
 function runDoctorDatesReport() {
@@ -1266,7 +1361,7 @@ function runDoctorDatesReport() {
     const docObj = doctorsList.find(d => String(d.id) === String(docId));
     const docName = docObj ? `${docObj.firstName} ${docObj.lastName}` : `ID ${docId}`;
 
-    fetchReport(`/reports/visits/doctor/period?doctorId=${docId}&start=${start}&end=${end}`, `Visits by Dr. ${docName} (${start} to ${end})`, ['Visit ID', 'Date', 'Patient'], v => [v.id, v.visitDate + ' ' + (v.visitTime || ''), v.patientName], true);
+    fetchReport(`/reports/visits/doctor/period?doctorId=${docId}&start=${start}&end=${end}`, `Visits by Dr. ${docName} (${fmtDate(start)} to ${fmtDate(end)})`, ['Visit ID', 'Date', 'Patient'], v => [v.id, fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime), v.patientName], true);
 }
 
 function runPatientVisitsReport() {
@@ -1278,11 +1373,72 @@ function runPatientVisitsReport() {
 
     fetchReport(`/visits/patient/${patId}`, `Visits for Patient: ${patName}`, ['Visit ID', 'Date', 'Doctor', 'Diagnosis', 'Prescription'], v => [
         v.id,
-        v.visitDate + ' ' + (v.visitTime || ''),
+        fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime),
         'Dr. ' + v.doctorName,
         (v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d=>d.name).join(', ') : '—'),
         (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—')
     ], true);
+}
+
+/**
+ * Turns a failed API response into a message worth showing a user.
+ * WHY: the backend already sends a per-field breakdown in `details` —
+ * {"firstName":"First name is required","egn":"EGN must be exactly 10 digits"} — but the UI only
+ * ever read the top-level `message`, so every rejected form said "Request validation failed" and
+ * left the user guessing which field was wrong. The field messages come from the validation
+ * annotations and are already written as sentences, so they need no further translation.
+ */
+async function apiErrorMessage(response, fallback) {
+    const body = await response.json().catch(() => null);
+    if (body && body.details && Object.keys(body.details).length > 0) {
+        return Object.values(body.details).join('\n');
+    }
+    if (body && body.message) return body.message;
+    return fallback || `HTTP ${response.status}`;
+}
+
+// The most recently rendered report, so Export CSV writes exactly what is on screen.
+let lastReport = null;
+
+/**
+ * Quotes one CSV field.
+ * The leading apostrophe on =, +, -, @ stops a spreadsheet treating a value as a formula: a
+ * diagnosis or patient name beginning with one of those characters would otherwise be executed
+ * by Excel when the exported file is opened.
+ */
+function csvCell(value) {
+    let s = value === null || value === undefined ? '' : String(value);
+    if (/^[=+\-@]/.test(s)) s = "'" + s;
+    return '"' + s.replace(/"/g, '""') + '"';
+}
+
+/**
+ * Exports the report currently on screen as CSV.
+ * WHY client-side: previously only three of the ten reports had an export, each needing its own
+ * backend endpoint. Building the file from the rendered rows gives every report the same button
+ * for free, and guarantees the download matches what the user is looking at — including any
+ * filters they applied.
+ */
+function exportCurrentReport() {
+    if (!lastReport || lastReport.rows.length === 0) return;
+
+    const csv = [lastReport.headers, ...lastReport.rows]
+        .map(row => row.map(csvCell).join(','))
+        .join('\r\n');
+
+    // BOM so Excel reads the file as UTF-8 and renders Cyrillic names correctly.
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const filename = lastReport.title.toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'report';
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel = false) {
@@ -1299,18 +1455,25 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         
+        const rows = data.map(rowMapper);
+        // Remember what is on screen so the export button below writes exactly that.
+        lastReport = { title, headers, rows };
+
         // Escape centrally: every report title and cell here is server data (patient and doctor
         // names, diagnosis text, prescription notes), and no row mapper produces markup.
         let html = `<h4 style="color: #F8FAFC; margin-bottom: 1rem;">${esc(title)}</h4>`;
-        if (data.length === 0) {
+        if (rows.length === 0) {
             html += '<p style="color: #94A3B8;">No records found for this report.</p>';
         } else {
+            html += `<div style="display:flex; justify-content:flex-end; margin-bottom:0.5rem;">
+                        <button class="btn btn-secondary" style="padding:0.3rem 0.9rem; font-size:0.8rem;"
+                                onclick="exportCurrentReport()">Export CSV</button>
+                     </div>`;
             html += '<table class="data-table"><thead><tr>';
             headers.forEach((h, i) => html += `<th onclick="sortTable(${i}, this)">${esc(h)}</th>`);
             html += '</tr></thead><tbody>';
 
-            data.forEach(item => {
-                const rowData = rowMapper(item);
+            rows.forEach(rowData => {
                 html += '<tr>';
                 rowData.forEach(cell => html += `<td>${esc(cell)}</td>`);
                 html += '</tr>';
@@ -1372,24 +1535,6 @@ function sortTable(columnIndex, thElement) {
 }
 
 // ================= CSV EXPORT HELPER =================
-async function downloadCsv(endpoint, filename) {
-    try {
-        const res = await fetchWithAuth(`${API_BASE}${endpoint}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(url);
-    } catch (e) {
-        alert('Failed to download CSV: ' + e.message);
-    }
-}
-
 // ================= AUDIT LOGS =================
 async function loadAuditLogs(page = 0) {
     const contentArea = document.getElementById('content-area');
@@ -1407,11 +1552,15 @@ async function loadAuditLogs(page = 0) {
             html += '<p style="color: #94A3B8;">No audit logs found.</p>';
         } else {
             html += '<table class="data-table"><thead><tr>';
-            html += '<th onclick="sortTable(0, this)">Timestamp</th><th onclick="sortTable(1, this)">Action</th><th onclick="sortTable(2, this)">Entity</th><th onclick="sortTable(3, this)">ID</th><th onclick="sortTable(4, this)">Actor</th>';
+            html += '<th onclick="sortTable(0, this)">Timestamp</th><th onclick="sortTable(1, this)">Action</th><th onclick="sortTable(2, this)">Entity</th><th onclick="sortTable(3, this)">Record</th><th onclick="sortTable(4, this)">Actor</th>';
             html += '</tr></thead><tbody>';
             logs.forEach(l => {
-                const dateStr = l.createdAt ? new Date(l.createdAt).toLocaleString() : '—';
-                html += `<tr><td>${esc(dateStr)}</td><td><span class="role-badge">${esc(l.action)}</span></td><td>${esc(l.entityType)}</td><td>#${esc(String(l.entityId))}</td><td>${esc(l.actor)}</td></tr>`;
+                const dateStr = l.createdAt ? fmtDateTime(l.createdAt) : '—';
+                // Older entries predate entity_label, so fall back to the id alone.
+                const record = l.entityLabel
+                    ? `${esc(l.entityLabel)} <span style="color:#64748B;">#${esc(String(l.entityId))}</span>`
+                    : `<span style="color:#64748B;">#${esc(String(l.entityId))}</span>`;
+                html += `<tr><td>${esc(dateStr)}</td><td><span class="role-badge">${esc(l.action)}</span></td><td>${esc(l.entityType)}</td><td>${record}</td><td>${esc(l.actor)}</td></tr>`;
             });
             html += '</tbody></table>';
         }
@@ -1505,8 +1654,7 @@ async function approveDoctor(doctorId) {
     try {
         const res = await fetchWithAuth(`${API_BASE}/doctors/${doctorId}/approve`, { method: 'POST' });
         if (!res.ok) {
-            const errJson = await res.json().catch(() => null);
-            throw new Error((errJson && errJson.message) ? errJson.message : `HTTP ${res.status}`);
+            throw new Error(await apiErrorMessage(res, `HTTP ${res.status}`));
         }
         await loadFullReportsDashboard();
     } catch (err) {
@@ -1570,8 +1718,8 @@ async function viewPatientVisitsDirect(patientId) {
             visits.forEach(v => {
                 const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
                 const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
-                const slInfo = v.sickLeave ? `${esc(v.sickLeave.validFrom)} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
-                html += `<tr><td>${esc(v.visitDate)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
+                const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
+                html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });
             html += '</tbody></table>';
         }

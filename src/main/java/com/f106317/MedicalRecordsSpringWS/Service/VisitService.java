@@ -105,7 +105,7 @@ public class VisitService {
         visit.setVisitDate(request.visitDate());
         visit.setVisitTime(request.visitTime());
         Visit saved = visitRepository.save(visit);
-        auditLogService.log(authentication, "CREATE", "Visit", saved.getId());
+        auditLogService.log(authentication, "CREATE", "Visit", saved.getId(), visitLabel(saved));
         return VisitResponse.fromEntity(saved);
     }
 
@@ -151,7 +151,7 @@ public class VisitService {
         existingVisit.setVisitDate(request.visitDate());
         existingVisit.setVisitTime(request.visitTime());
         Visit saved = visitRepository.save(existingVisit);
-        auditLogService.log(authentication, "UPDATE", "Visit", saved.getId());
+        auditLogService.log(authentication, "UPDATE", "Visit", saved.getId(), visitLabel(saved));
         return VisitResponse.fromEntity(saved);
     }
 
@@ -161,7 +161,7 @@ public class VisitService {
         Visit visit = findVisitById(id);
         authorizationService.assertDoctorCanModifyVisit(authentication, visit);
         visitRepository.delete(visit);
-        auditLogService.log(authentication, "DELETE", "Visit", id);
+        auditLogService.log(authentication, "DELETE", "Visit", id, visitLabel(visit));
     }
 
     @Transactional(readOnly = true)
@@ -205,7 +205,8 @@ public class VisitService {
         diagnosis.setVisit(visit);
         diagnosis.setName(request.name());
         Diagnosis saved = diagnosisRepository.save(diagnosis);
-        auditLogService.log(authentication, "CREATE", "Diagnosis", saved.getId());
+        auditLogService.log(authentication, "CREATE", "Diagnosis", saved.getId(),
+                saved.getName() + " - " + visitLabel(visit));
         return DiagnosisResponse.fromEntity(saved);
     }
 
@@ -222,7 +223,8 @@ public class VisitService {
         authorizationService.assertDoctorCanModifyVisit(authentication, diagnosis.getVisit());
         diagnosis.setName(request.name());
         Diagnosis saved = diagnosisRepository.save(diagnosis);
-        auditLogService.log(authentication, "UPDATE", "Diagnosis", saved.getId());
+        auditLogService.log(authentication, "UPDATE", "Diagnosis", saved.getId(),
+                saved.getName() + " - " + visitLabel(saved.getVisit()));
         return DiagnosisResponse.fromEntity(saved);
     }
 
@@ -231,7 +233,8 @@ public class VisitService {
         Diagnosis diagnosis = findDiagnosisById(id);
         authorizationService.assertDoctorCanModifyVisit(authentication, diagnosis.getVisit());
         diagnosisRepository.deleteById(id);
-        auditLogService.log(authentication, "DELETE", "Diagnosis", id);
+        auditLogService.log(authentication, "DELETE", "Diagnosis", id,
+                diagnosis.getName() + " - " + visitLabel(diagnosis.getVisit()));
     }
 
     @Transactional(readOnly = true)
@@ -265,7 +268,8 @@ public class VisitService {
         prescription.setVisit(visit);
         prescription.setNote(request.note());
         Prescription saved = prescriptionRepository.save(prescription);
-        auditLogService.log(authentication, "CREATE", "Prescription", saved.getId());
+        auditLogService.log(authentication, "CREATE", "Prescription", saved.getId(),
+                saved.getNote() + " - " + visitLabel(visit));
         return PrescriptionResponse.fromEntity(saved);
     }
 
@@ -284,7 +288,8 @@ public class VisitService {
         authorizationService.assertDoctorCanModifyVisit(authentication, prescription.getVisit());
         prescription.setNote(request.note());
         Prescription saved = prescriptionRepository.save(prescription);
-        auditLogService.log(authentication, "UPDATE", "Prescription", saved.getId());
+        auditLogService.log(authentication, "UPDATE", "Prescription", saved.getId(),
+                saved.getNote() + " - " + visitLabel(saved.getVisit()));
         return PrescriptionResponse.fromEntity(saved);
     }
 
@@ -294,7 +299,8 @@ public class VisitService {
                 .orElseThrow(() -> new ResourceNotFoundException("Prescription not found with id: " + id));
         authorizationService.assertDoctorCanModifyVisit(authentication, prescription.getVisit());
         prescriptionRepository.deleteById(id);
-        auditLogService.log(authentication, "DELETE", "Prescription", id);
+        auditLogService.log(authentication, "DELETE", "Prescription", id,
+                prescription.getNote() + " - " + visitLabel(prescription.getVisit()));
     }
 
     // ──────────────────────────────────────────────
@@ -317,7 +323,7 @@ public class VisitService {
         sickLeave.setValidFrom(request.validFrom());
         sickLeave.setValidForDays(request.validForDays());
         SickLeave saved = sickLeaveRepository.save(sickLeave);
-        auditLogService.log(authentication, "CREATE", "SickLeave", saved.getId());
+        auditLogService.log(authentication, "CREATE", "SickLeave", saved.getId(), sickLeaveLabel(saved));
         return SickLeaveResponse.fromEntity(saved);
     }
 
@@ -336,7 +342,7 @@ public class VisitService {
         sickLeave.setValidFrom(request.validFrom());
         sickLeave.setValidForDays(request.validForDays());
         SickLeave saved = sickLeaveRepository.save(sickLeave);
-        auditLogService.log(authentication, "UPDATE", "SickLeave", saved.getId());
+        auditLogService.log(authentication, "UPDATE", "SickLeave", saved.getId(), sickLeaveLabel(saved));
         return SickLeaveResponse.fromEntity(saved);
     }
 
@@ -345,7 +351,7 @@ public class VisitService {
         SickLeave sickLeave = findSickLeaveById(id);
         authorizationService.assertDoctorCanModifyVisit(authentication, sickLeave.getVisit());
         sickLeaveRepository.deleteById(id);
-        auditLogService.log(authentication, "DELETE", "SickLeave", id);
+        auditLogService.log(authentication, "DELETE", "SickLeave", id, sickLeaveLabel(sickLeave));
     }
 
     // ──────────────────────────────────────────────
@@ -394,6 +400,19 @@ public class VisitService {
             throw new IllegalArgumentException(
                     label + " cannot be more than " + MAX_BOOKING_AHEAD_YEARS + " year(s) in the future");
         }
+    }
+
+    /** Audit label for a visit, e.g. "Ivan Dimitrov / Dr. Georgi Ivanov, 2026-07-01". */
+    private static String visitLabel(Visit visit) {
+        return visit.getPatient().getFirstName() + " " + visit.getPatient().getLastName()
+                + " / Dr. " + visit.getDoctor().getFirstName() + " " + visit.getDoctor().getLastName()
+                + ", " + visit.getVisitDate();
+    }
+
+    /** Audit label for a sick leave, e.g. "5 days from 2026-07-01 - Ivan Dimitrov / Dr. ...". */
+    private static String sickLeaveLabel(SickLeave sickLeave) {
+        return sickLeave.getValidForDays() + " days from " + sickLeave.getValidFrom()
+                + " - " + visitLabel(sickLeave.getVisit());
     }
 
     private Visit findVisitById(Long id) {

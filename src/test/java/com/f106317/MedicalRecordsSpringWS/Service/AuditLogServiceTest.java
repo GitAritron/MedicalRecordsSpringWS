@@ -34,7 +34,7 @@ class AuditLogServiceTest {
         when(authorizationService.extractSubject(null)).thenReturn(null);
         when(auditLogRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        auditLogService.log(null, "CREATE", "Doctor", 1L);
+        auditLogService.log(null, "CREATE", "Doctor", 1L, "Dr. Georgi Ivanov");
 
         verify(auditLogRepository, times(1)).save(any(AuditLog.class));
     }

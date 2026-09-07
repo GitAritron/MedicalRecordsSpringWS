@@ -10,6 +10,7 @@ import com.f106317.MedicalRecordsSpringWS.DTO.PendingDoctorResponse;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.SpecializationRepository;
+import com.f106317.MedicalRecordsSpringWS.Data.Repo.VisitRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,6 +51,9 @@ class DoctorServiceTest {
 
     @Mock
     private KeycloakAdminService keycloakAdminService;
+
+    @Mock
+    private VisitRepository visitRepository;
 
     // Real collaborator, not a mock: extractSubject() has no dependencies, and self-registration
     // tests are meaningless if the identity extraction they rely on is stubbed out.
@@ -138,6 +142,7 @@ class DoctorServiceTest {
     @Test
     void deleteDoctor_success() {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(visitRepository.countByDoctorId(1L)).thenReturn(0L);
         assertDoesNotThrow(() -> doctorService.deleteDoctor(1L, TestAuth.admin()));
         verify(doctorRepository, times(1)).delete(any());
     }
@@ -150,6 +155,37 @@ class DoctorServiceTest {
     void deleteDoctor_notFound() {
         when(doctorRepository.findById(2L)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> doctorService.deleteDoctor(2L, TestAuth.admin()));
+    }
+
+    /**
+     * WHAT: a doctor with recorded visits cannot be deleted.
+     * WHY: visit.doctor_id is ON DELETE CASCADE, so the database would remove their visits — and
+     * the diagnoses, prescriptions and sick leaves beneath them — as a side effect. That erases
+     * patient medical history, which belongs to the patient rather than the practitioner.
+     */
+    @Test
+    void deleteDoctor_refusedWhenDoctorHasVisits() {
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(visitRepository.countByDoctorId(1L)).thenReturn(3L);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> doctorService.deleteDoctor(1L, TestAuth.admin()));
+
+        assertTrue(ex.getMessage().contains("3 recorded visit"), ex.getMessage());
+        verify(doctorRepository, never()).delete(any());
+        verify(auditLogService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    /** A doctor who has never seen a patient carries no history, so deletion is allowed. */
+    @Test
+    void deleteDoctor_allowedWhenDoctorHasNoVisits() {
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(visitRepository.countByDoctorId(1L)).thenReturn(0L);
+
+        doctorService.deleteDoctor(1L, TestAuth.admin());
+
+        verify(doctorRepository).delete(doctor);
+        verify(auditLogService).log(any(), eq("DELETE"), eq("Doctor"), eq(1L), eq("Dr. John Doe"));
     }
 
     /** 
@@ -181,7 +217,7 @@ class DoctorServiceTest {
 
         verify(keycloakAdminService).assignRealmRole("kc-doctor-1", "DOCTOR");
         verify(auditLogService).log(any(), eq(AuditLogService.ACTION_APPROVE_DOCTOR),
-                eq(AuditLogService.ENTITY_DOCTOR), eq(1L));
+                eq(AuditLogService.ENTITY_DOCTOR), eq(1L), eq("Dr. John Doe"));
     }
 
     /** A record with no Keycloak account behind it cannot be approved. */
@@ -192,7 +228,7 @@ class DoctorServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> doctorService.approveDoctor(1L, TestAuth.admin()));
         verify(keycloakAdminService, never()).assignRealmRole(any(), any());
-        verify(auditLogService, never()).log(any(), any(), any(), any());
+        verify(auditLogService, never()).log(any(), any(), any(), any(), any());
     }
 
     /**
@@ -208,7 +244,7 @@ class DoctorServiceTest {
                 .when(keycloakAdminService).assignRealmRole(any(), any());
 
         assertThrows(RuntimeException.class, () -> doctorService.approveDoctor(1L, TestAuth.admin()));
-        verify(auditLogService, never()).log(any(), any(), any(), any());
+        verify(auditLogService, never()).log(any(), any(), any(), any(), any());
     }
 
     /** Pending list resolves each audit entry to the doctor it names. */

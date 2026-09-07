@@ -90,7 +90,7 @@ public class PatientService {
         }
         patient.setGp(resolveGpDoctor(request.gpDoctorId()));
         Patient saved = patientRepository.save(patient);
-        auditLogService.log(authentication, "CREATE", "Patient", saved.getId());
+        auditLogService.log(authentication, "CREATE", "Patient", saved.getId(), patientLabel(saved));
         return PatientResponse.fromEntity(saved);
     }
 
@@ -118,7 +118,7 @@ public class PatientService {
         patient.setLastName(request.lastName());
         patient.setGp(resolveGpDoctor(request.gpDoctorId()));
         Patient saved = patientRepository.save(patient);
-        auditLogService.log(authentication, "SELF_REGISTER", "Patient", saved.getId());
+        auditLogService.log(authentication, "SELF_REGISTER", "Patient", saved.getId(), patientLabel(saved));
         return PatientResponse.fromEntity(saved);
     }
 
@@ -142,7 +142,7 @@ public class PatientService {
         }
         patient.setGp(resolveGpDoctor(request.gpDoctorId()));
         Patient saved = patientRepository.save(patient);
-        auditLogService.log(authentication, "UPDATE", "Patient", saved.getId());
+        auditLogService.log(authentication, "UPDATE", "Patient", saved.getId(), patientLabel(saved));
         return PatientResponse.fromEntity(saved);
     }
 
@@ -153,7 +153,7 @@ public class PatientService {
     public void deletePatient(Long id, Authentication authentication) {
         Patient patient = findPatientById(id);
         patientRepository.delete(patient);
-        auditLogService.log(authentication, "DELETE", "Patient", id);
+        auditLogService.log(authentication, "DELETE", "Patient", id, patientLabel(patient));
     }
 
     /**
@@ -167,7 +167,9 @@ public class PatientService {
         authorizationService.assertCanChangeGeneralPractitioner(authentication, patient);
         patient.setGp(resolveGpDoctor(gpDoctorId));
         Patient saved = patientRepository.save(patient);
-        auditLogService.log(authentication, "UPDATE_GP", "Patient", saved.getId());
+        auditLogService.log(authentication, "UPDATE_GP", "Patient", saved.getId(),
+                patientLabel(saved) + " -> " + (saved.getGp() == null ? "no GP"
+                        : "Dr. " + saved.getGp().getFirstName() + " " + saved.getGp().getLastName()));
         return PatientResponse.fromEntity(saved);
     }
 
@@ -187,6 +189,11 @@ public class PatientService {
         return patientRepository.findByGpId(gpId).stream()
                 .map(PatientResponse::fromEntity)
                 .collect(Collectors.toList());
+    }
+
+    /** Label used in the audit trail, e.g. "Ivan Dimitrov". */
+    private static String patientLabel(Patient patient) {
+        return patient.getFirstName() + " " + patient.getLastName();
     }
 
     Patient findPatientById(Long id) {

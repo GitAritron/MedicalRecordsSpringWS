@@ -36,7 +36,9 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authorize -> authorize
-                .requestMatchers("/", "/index.html", "/*.css", "/*.js").permitAll()
+                // The browser requests /favicon.ico on every page load without a bearer token,
+                // so leaving it authenticated produced a 401 in the console on every screen.
+                .requestMatchers("/", "/index.html", "/*.css", "/*.js", "/favicon.ico").permitAll()
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().authenticated()
             )

@@ -29,6 +29,14 @@ public class AuditLog extends BaseEntity {
     @Column(name = "entity_id", nullable = false)
     private Long entityId;
 
+    /**
+     * Who or what the entry refers to, captured when the action happened.
+     * WHY store it rather than resolve it on read: an entry frequently describes a record that has
+     * since been deleted, and an id alone then names something an administrator cannot look up.
+     */
+    @Column(name = "entity_label", length = 150)
+    private String entityLabel;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.time.Instant;
@@ -115,6 +116,25 @@ public class GlobalExceptionHandler {
                 Map.of()
         );
         return new ResponseEntity<>(apiError, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * A request for a static file that does not exist.
+     * WHY this needs its own handler: without it the exception falls through to the catch-all
+     * below and a missing file is reported as 500 with a stack trace in the log. Spring raises
+     * this for anything the resource handler cannot resolve — including /favicon.ico and any
+     * mistyped .js or .css path — so the wrong status was returned on ordinary 404s.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiError> handleNoResourceFound(NoResourceFoundException ex, HttpServletRequest request) {
+        ApiError apiError = new ApiError(
+                "RESOURCE_NOT_FOUND",
+                "The requested resource does not exist",
+                request.getRequestURI(),
+                Instant.now(),
+                Map.of()
+        );
+        return new ResponseEntity<>(apiError, HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler(Exception.class)

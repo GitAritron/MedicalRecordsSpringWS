@@ -51,6 +51,7 @@ public class InsuranceService {
         payment.setInsuranceDate(request.insuranceDate());
         payment.setPaidOn(request.paidOn());
         PaidInsurance saved = insuranceRepository.save(payment);
-        auditLogService.log(authentication, "RECORD_INSURANCE", "PaidInsurance", saved.getId());
+        auditLogService.log(authentication, "RECORD_INSURANCE", "PaidInsurance", saved.getId(),
+                patient.getFirstName() + " " + patient.getLastName() + " - " + request.insuranceDate());
     }
 }

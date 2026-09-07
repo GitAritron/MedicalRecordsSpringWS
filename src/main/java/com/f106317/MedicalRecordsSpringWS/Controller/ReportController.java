@@ -8,8 +8,6 @@ import com.f106317.MedicalRecordsSpringWS.Service.DoctorService;
 import com.f106317.MedicalRecordsSpringWS.Service.VisitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,7 +17,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @RestController
@@ -125,27 +122,6 @@ public class ReportController {
         return ResponseEntity.ok(paginate(sorted, page, size));
     }
 
-    @GetMapping(value = "/export/diagnoses/common", produces = "text/csv")
-    public ResponseEntity<String> exportMostCommonDiagnosesCsv() {
-        List<ReportDTO.DiagnosisCount> data = visitService.getMostCommonDiagnoses();
-        String csv = toCsv("diagnosisName,count", data, row -> escape(row.diagnosisName()) + "," + row.count());
-        return csvResponse("most-common-diagnoses.csv", csv);
-    }
-
-    @GetMapping(value = "/export/doctors/visits", produces = "text/csv")
-    public ResponseEntity<String> exportDoctorVisitsCsv() {
-        List<ReportDTO.DoctorVisitCount> data = doctorService.getDoctorsWithVisitCount();
-        String csv = toCsv("doctorId,doctorName,visitCount", data, row -> row.doctorId() + "," + escape(row.doctorName()) + "," + row.visitCount());
-        return csvResponse("doctor-visit-count.csv", csv);
-    }
-
-    @GetMapping(value = "/export/sickleaves/doctors", produces = "text/csv")
-    public ResponseEntity<String> exportSickLeavesByDoctorCsv() {
-        List<ReportDTO.DoctorSickLeaveCount> data = visitService.getDoctorsWithMostSickLeaves();
-        String csv = toCsv("doctorId,doctorName,sickLeaveCount", data, row -> row.doctorId() + "," + escape(row.doctorName()) + "," + row.sickLeaveCount());
-        return csvResponse("doctor-sickleave-count.csv", csv);
-    }
-
     /** Largest page an endpoint will serve, matching the cap AuditLogService already applies. */
     static final int MAX_PAGE_SIZE = 100;
 
@@ -165,28 +141,5 @@ public class ReportController {
         }
         int from = (int) start;
         return data.subList(from, Math.min(from + safeSize, data.size()));
-    }
-
-    private <T> String toCsv(String header, List<T> rows, Function<T, String> mapper) {
-        StringBuilder builder = new StringBuilder(header).append("\n");
-        for (T row : rows) {
-            builder.append(mapper.apply(row)).append("\n");
-        }
-        return builder.toString();
-    }
-
-    private ResponseEntity<String> csvResponse(String fileName, String csv) {
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
-                .contentType(MediaType.parseMediaType("text/csv"))
-                .body(csv);
-    }
-
-    private String escape(String value) {
-        if (value == null) {
-            return "";
-        }
-        String escaped = value.replace("\"", "\"\"");
-        return "\"" + escaped + "\"";
     }
 }

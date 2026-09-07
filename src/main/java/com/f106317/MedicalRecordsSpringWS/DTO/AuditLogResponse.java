@@ -10,6 +10,7 @@ public record AuditLogResponse(
         String action,
         String entityType,
         Long entityId,
+        String entityLabel,
         LocalDateTime createdAt
 ) {
     public static AuditLogResponse fromEntity(AuditLog auditLog) {
@@ -19,6 +20,7 @@ public record AuditLogResponse(
                 auditLog.getAction(),
                 auditLog.getEntityType(),
                 auditLog.getEntityId(),
+                auditLog.getEntityLabel(),
                 auditLog.getCreatedAt()
         );
     }
