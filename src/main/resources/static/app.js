@@ -291,16 +291,18 @@ async function renderNewUserRoleSelection() {
     contentArea.innerHTML = `
         <div style="max-width: 550px; margin: 2rem auto; text-align: center;">
             <h3>Welcome, ${esc(keycloak.tokenParsed.preferred_username)}!</h3>
-            <p style="color: #94A3B8; margin-bottom: 2rem;">Please select your role to complete your profile setup.</p>
 
-            <div style="display: flex; gap: 1.5rem; justify-content: center;">
-                <div class="report-card" style="flex: 1; text-align: center; cursor: pointer;" onclick="showPatientRegistrationForm()">
-                                        <h4>I am a Patient</h4>
-                    <p>Register your patient profile to view medical visits, diagnoses, and prescriptions.</p>
-                </div>
-                <div class="report-card" style="flex: 1; text-align: center; cursor: pointer;" onclick="showDoctorRegistrationForm()">
-                                        <h4>I am a Doctor</h4>
-                    <p>Submit your doctor credentials for administrator review and activation.</p>
+            <div id="rolePicker">
+                <p class="muted-label" style="margin-bottom: 2rem;">Please select your role to complete your profile setup.</p>
+                <div class="role-choice-grid">
+                    <div class="report-card role-choice" onclick="showPatientRegistrationForm()">
+                        <h4>I am a Patient</h4>
+                        <p>Register your patient profile to view medical visits, diagnoses, and prescriptions.</p>
+                    </div>
+                    <div class="report-card role-choice" onclick="showDoctorRegistrationForm()">
+                        <h4>I am a Doctor</h4>
+                        <p>Submit your doctor credentials for administrator review and activation.</p>
+                    </div>
                 </div>
             </div>
 
@@ -317,6 +319,7 @@ async function renderNewUserRoleSelection() {
  */
 async function showPatientRegistrationForm() {
     const container = document.getElementById('selfRegContainer');
+    document.getElementById('rolePicker').hidden = true;
     container.innerHTML = `
         <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.5rem; border-radius: 12px;">
             <h4>Complete Patient Profile</h4>
@@ -338,12 +341,14 @@ async function showPatientRegistrationForm() {
                 </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Complete Registration</button>
             </form>
+            <button type="button" class="btn-back" onclick="backToRoleChoice()">&larr; Choose a different role</button>
         </div>
     `;
 }
 
 function showDoctorRegistrationForm() {
     const container = document.getElementById('selfRegContainer');
+    document.getElementById('rolePicker').hidden = true;
     container.innerHTML = `
         <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.5rem; border-radius: 12px;">
             <h4>Submit Doctor Application</h4>
@@ -361,8 +366,15 @@ function showDoctorRegistrationForm() {
                 </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Submit Application</button>
             </form>
+            <button type="button" class="btn-back" onclick="backToRoleChoice()">&larr; Choose a different role</button>
         </div>
     `;
+}
+
+/** Restores the role picker after a mis-click, discarding whatever was typed into the open form. */
+function backToRoleChoice() {
+    document.getElementById('selfRegContainer').innerHTML = '';
+    document.getElementById('rolePicker').hidden = false;
 }
 
 async function submitSelfPatientRegistration(e) {

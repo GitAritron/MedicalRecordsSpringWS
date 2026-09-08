@@ -476,6 +476,33 @@ h4 {
     line-height: 1.45;
 }
 
+/* The two cards a signed-in user with no realm role picks between. They reuse .report-card for
+   the surface and hover, so only the layout differs. */
+.role-choice-grid {
+    display: flex;
+    gap: 1.5rem;
+    justify-content: center;
+}
+
+.role-choice {
+    flex: 1;
+    text-align: center;
+}
+
+.btn-back {
+    background: none;
+    border: none;
+    color: #94A3B8;
+    cursor: pointer;
+    font-size: 0.85rem;
+    margin-top: 1rem;
+    padding: 0;
+}
+
+.btn-back:hover {
+    color: #E2E8F0;
+}
+
 .checkbox-group {
     display: flex;
     flex-wrap: wrap;
