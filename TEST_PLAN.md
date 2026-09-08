@@ -12,9 +12,9 @@ Work top to bottom. Each phase gates the next — there is no value in running t
 | Phase | What it proves | Time |
 |---|---|---|
 | **1. Automated suite** | Business rules and access control, on every build | 1 min |
-| **2. Stack bring-up** | The app runs against real MySQL and Keycloak | 10 min |
+| **2. Stack bring-up** | The app runs against real MySQL and Keycloak | 15 min |
 | **3. Smoke path** | Each role can sign in and reach their dashboard | 10 min |
-| **4. Spec conformance** | Every graded requirement (§1–§4) is demonstrable | 60 min |
+| **4. Spec conformance** | Every graded requirement (§1–§4) is demonstrable | 90 min |
 | **5. Negative testing** | The rules refuse what they should refuse | 30 min |
 | **6. Data integrity** | Constraints, validation, and edge-case inputs hold | 30 min |
 
@@ -32,7 +32,9 @@ This matters for deciding where to spend manual effort.
 |---|---|---|
 | MySQL dialect behaviour | The insurance query uses `CONCAT(YEAR(...), MONTH(...))`; H2 and MySQL can differ | Phase 2.3, 4.3 |
 | `ddl-auto: validate` vs `init.sql` | Schema drift only surfaces at production startup | Phase 2.2 |
-| Real Keycloak admin API calls | Role assignment on registration and approval is mocked in tests | Phase 3.4, 4.4 |
+| Real Keycloak admin API calls | Account creation, role grant **and revoke**, and password reset are all mocked in tests — the suite only proves they fail loudly when Keycloak is unreachable | Phase 3.4, 4.4h, 4.4j |
+| Keycloak data persistence | Nothing in the suite restarts a container | Phase 4.4k |
+| PKCE on the browser flow | The suite never performs an authorization-code exchange | Phase 3.1d |
 | The SPA itself | No JavaScript tests exist; every UI behaviour is manual | Phases 3–6 |
 | Token lifecycle | Refresh, expiry, and role propagation after a role is granted | Phase 3.4 |
 
@@ -49,10 +51,15 @@ This matters for deciding where to spend manual effort.
 Coverage report: `build/reports/jacoco/test/html/index.html`
 
 ```bash
-./gradlew jacocoTestCoverageVerification
+./gradlew check
 ```
 
-**Pass criteria:** passes at the 60% line minimum configured in `build.gradle.kts`.
+**Pass criteria:** `BUILD SUCCESSFUL`. `jacocoTestCoverageVerification` is wired into `check`, so
+this now enforces the 0.60 minimum in `build.gradle.kts` — previously it was configured but never
+attached to anything, so the threshold could not fail.
+
+> The rule measures **instruction** coverage, not line coverage. It currently passes at ~65%
+> (line 68%, method 69%). Branch coverage is ~53% — below the number, but not what the rule counts.
 
 > If a test fails here, stop. Everything below assumes a green build.
 
@@ -63,10 +70,10 @@ Coverage report: `build/reports/jacoco/test/html/index.html`
 ### 2.1 Start infrastructure
 
 ```bash
-docker compose up -d
+docker compose up -d --wait
 ```
 
-Wait for both containers to report healthy:
+`--wait` blocks until both healthchecks pass, so there is nothing to poll. To check anyway:
 
 ```bash
 docker compose ps
@@ -74,7 +81,11 @@ docker compose ps
 
 **Pass:** `medical_records_db` and `medical_records_keycloak` both `healthy`.
 
-> Keycloak takes ~30s on first start while it imports the realm.
+> Keycloak stores its own data in the **MySQL container**, in a separate `keycloak` schema created
+> by `db/00-keycloak-db.sql`. First start therefore takes a couple of minutes while it builds its
+> ~90 tables, and `keycloak` genuinely depends on `mysql` being healthy. Accounts created at runtime
+> now survive `docker compose down`; before this change Keycloak ran on in-container H2 with no
+> volume and lost them silently, because `--import-realm` brought the seeded users back.
 
 ### 2.2 Verify the schema matches the entities
 
@@ -89,7 +100,11 @@ The app runs `ddl-auto: validate`, so it refuses to start if `init.sql` and the 
 **Fail symptom:** `Schema-validation: missing table / missing column`. That means `init.sql` and the entity model have drifted — compare the failing column against `src/main/resources/db/init.sql`.
 
 > If you have run an older build before, the MySQL volume already exists and `init.sql` will **not** re-run. To reseed:
-> `docker compose down -v && docker compose up -d`
+> `docker compose down -v && docker compose up -d --wait`
+>
+> **Since Keycloak persists, `--import-realm` only imports when the realm is absent.** Edits to
+> `realm-export.json` therefore take effect on a `down -v` (which also reseeds the medical data) or
+> by changing the setting in the admin console — not on a plain restart.
 
 ### 2.3 Verify the seed data loaded
 
@@ -101,6 +116,15 @@ docker exec -it medical_records_db mysql -uroot -proot medical_records_db -e "SE
 
 **Pass:** 5 doctors, 15 patients, 10 visits. Patients **1 and 2 show 6 months**; patients 3–8 show 1; patients 9–15 absent.
 
+Confirm Keycloak got its own schema rather than falling back to H2:
+
+```bash
+docker exec medical_records_db mysql -uroot -proot -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='keycloak';"
+```
+
+**Pass:** ~90. A `0` means the schema exists but Keycloak never populated it; an error means
+`00-keycloak-db.sql` did not run — reseed with `down -v`.
+
 > The insurance rows are seeded relative to `CURDATE()`, so patients 1 and 2 must show exactly 6 regardless of when you run this. If they show 5, the seed did not apply relative dates — reseed as above.
 
 ---
@@ -109,21 +133,40 @@ docker exec -it medical_records_db mysql -uroot -proot medical_records_db -e "SE
 
 Open `http://localhost:8080`.
 
+**Signed out**, the header carries the wordmark and nothing else — no Login or Register buttons.
+The landing page itself offers **Sign in** and **Create an account**, plus three role cards. The
+duplicate pair that used to sit in the header appeared under exactly the same condition, so it was
+removed.
+
 ### 3.1 Sign-in and role routing
 
-| # | Sign in as | Expect header | Expect tabs |
-|---|---|---|---|
-| 3.1a | `admin` / `admin` | `admin (ADMIN)` | All Reports · Doctors · Patients · Visits · Audit Logs |
-| 3.1b | `doctor` / `doctor` | `doctor (DOCTOR)` | My Patients · All Patients · Visits · All Doctors · Reports |
-| 3.1c | `patient` / `patient` | `patient (PATIENT)` | My Medical History · Doctors Directory |
+Tabs appear in one order for every role — the role's own view first, then the shared directories,
+visits, reports, and the administrator-only log. **The landing screen is not always the first tab:**
+an administrator lands on Reports, which is fourth.
+
+| # | Sign in as | Expect header | Expect tabs | Lands on |
+|---|---|---|---|---|
+| 3.1a | `admin` / `admin` | `admin (ADMIN)` | Patients · Doctors · Visits · **Reports** · Audit Logs | Reports |
+| 3.1b | `doctor` / `doctor` | `doctor (DOCTOR)` | **My Patients** · All Patients · All Doctors · Visits · Reports | My Patients |
+| 3.1c | `patient` / `patient` | `patient (PATIENT)` | **My Medical History** · Doctors Directory | My Medical History |
+
+**Pass:** the highlighted tab is the one whose screen is showing. Both come from the same `landing`
+flag in `TABS_BY_ROLE`, so they cannot disagree.
 
 Sign out fully between roles (or use a private window) — a stale token will send you to the wrong dashboard.
+
+### 3.1d Sign-in uses PKCE
+
+Nothing to configure: the realm sets `pkce.code.challenge.method=S256`, so Keycloak **refuses** a
+code exchange without a verifier. A successful sign-in is itself the proof. To see it, watch the
+redirect to `/auth` in the Network tab — the query string carries `code_challenge` and
+`code_challenge_method=S256`.
 
 ### 3.2 Every landing screen renders data
 
 | # | Role | Screen | Expect |
 |---|---|---|---|
-| 3.2a | ADMIN | All Reports | Report cards render, no error banner |
+| 3.2a | ADMIN | Reports | Report cards render, no error banner; the pending-approvals banner appears only when a doctor is awaiting approval |
 | 3.2b | ADMIN | Visits | 10 visits listed with patient, doctor, diagnosis |
 | 3.2c | DOCTOR | My Patients | Dr. Georgi Ivanov's roster (patients 1, 2, 3, 8, 11, 14) |
 | 3.2d | PATIENT | My Medical History | Ivan Dimitrov's visit of 2026-07-01, diagnosis *Acute Bronchitis* |
@@ -140,9 +183,12 @@ With DevTools open, click through every tab for each role.
 
 This is the only flow that writes to Keycloak, and it is entirely mocked in the automated suite.
 
-1. Sign out. Click **Register**. Create `testpatient` / `testpatient`.
+1. Sign out. Click **Create an account** on the landing page. Create `testpatient` / `testpatient`.
+   Keycloak's own sign-up form asks for an email — that is its account attribute, not a field this
+   application stores or uses; any address will do.
 2. Sign in as that user → the role-selection screen appears (header shows `(New User)`).
-3. Choose **I am a Patient**, enter EGN `9001011234`, pick a GP, submit.
+3. Choose **I am a Patient**, enter EGN `9001011234`, submit. There is no GP picker here — the GP is
+   chosen from the dashboard afterwards, because a role-less user cannot yet read the doctor list.
 4. **Pass:** the app grants the PATIENT role and lands on My Medical History without a manual sign-out.
 5. Confirm in Keycloak (`http://localhost:8081`, `admin`/`admin` → realm `medical-records` → Users → `testpatient` → Role mapping): **PATIENT** is assigned.
 
@@ -161,7 +207,7 @@ As **admin** unless noted. For each: create, read back, edit, delete.
 | 4.1a | **Doctor** | Doctors → **+ Add New Doctor**: `Krasimir Tonev`, tick GP, pick 2 specializations → Save | Appears in list with GP=Yes and both specializations |
 | 4.1b | Doctor edit | Edit him → untick GP → Save | GP column becomes No |
 | 4.1c | Doctor delete | Delete him | Row disappears; list reloads |
-| 4.1d | **Patient** | Patients → **+ Add New Patient**: `Test Patient`, EGN `9001011111`, GP Dr. Georgi Ivanov | Appears with correct GP |
+| 4.1d | **Patient** | Patients → **+ Add New Patient**: `Test Patient`, EGN `9001011111`, GP Dr. Georgi Ivanov, **Portal access left blank** | Appears with correct GP, no credentials dialog |
 | 4.1e | Patient edit | Edit → change first name → Save | Name updates |
 | 4.1f | **Visit** | Visits → **+ Add New Visit**: patient Ivan Dimitrov, doctor Georgi Ivanov, tomorrow, 09:00 | Visit created |
 | 4.1g | **Diagnosis** | Open that visit → add diagnosis `Test Diagnosis` | Appears in the visit's diagnosis list |
@@ -184,7 +230,7 @@ As **admin** unless noted. For each: create, read back, edit, delete.
 
 ### 4.3 §3 — All ten reports
 
-Reports are reachable as **admin** (All Reports) and as **doctor** (Reports).
+The Reports tab is available to both **admin** and **doctor**.
 
 | # | Req | Report | Where | Pass |
 |---|---|---|---|---|
@@ -199,7 +245,10 @@ Reports are reachable as **admin** (All Reports) and as **doctor** (Reports).
 | 4.3i | 3i | Month with most sick leaves | Reports → *Sick Leaves per Month* | July 2026 with 6 |
 | 4.3j | 3j | Doctors issuing most sick leaves | Reports → *Sick Leaves per Doctor* | Dr. Georgi Ivanov top with 3 |
 
-**Also verify (4.3k):** the three CSV exports download and open correctly in a spreadsheet — *Most Common Diagnoses*, *Visits per Doctor*, *Sick Leaves per Doctor*.
+**Also verify (4.3k):** CSV export. There is one **Export CSV** button above the results table and it
+writes whatever report is currently on screen, filters included — it is built from the rendered rows
+rather than from a per-report endpoint, so every report exports. Check one download opens correctly
+in a spreadsheet, and that Cyrillic names are not mangled (the file carries a UTF-8 BOM for Excel).
 
 ### 4.4 §4 — Technology requirements
 
@@ -219,7 +268,7 @@ Reports are reachable as **admin** (All Reports) and as **doctor** (Reports).
 2. **Pass:** confirmation says the application is awaiting approval. There is **no GP checkbox** on this form.
 3. Sign out, sign back in as `testdoctor`.
    **Pass:** shows *"Application under review"* — **not** the role-selection screen again.
-4. Sign in as `admin` → All Reports.
+4. Sign in as `admin` → Reports.
    **Pass:** banner *"🔔 Doctors Awaiting Approval (1)"* showing the name, not an entity id.
 5. Click **Approve**, confirm.
    **Pass:** the banner disappears. Verify in Keycloak that `testdoctor` now holds **DOCTOR**.
@@ -229,6 +278,61 @@ Reports are reachable as **admin** (All Reports) and as **doctor** (Reports).
    **Pass:** the doctor dashboard loads with the five doctor tabs.
 
 **Fail symptom:** if the banner persists after approval, the approval was not recorded — check the Audit Logs tab for an `APPROVE_DOCTOR` entry.
+
+**Administrator-provisioned accounts (4.4j)** — the third Keycloak write path, and the one that lets
+staff give portal access to someone who has not registered themselves.
+
+Each patient and doctor form has a **Portal access** section. It has three states, and the form
+mirrors what the server accepts so the rules appear before a request is sent:
+
+| Filled in | Result |
+|---|---|
+| Nothing | A records-only entry — a person with no portal access. Legitimate and common. |
+| **New account username** | Creates the Keycloak account, grants the role, returns a one-time password |
+| **Existing account UUID** | Links the record to an account that already exists, and grants the role |
+
+1. As admin: **Patients → + Add New Patient**, `Test Provision`, EGN `9901017777`, any GP, username
+   `tprovision` → Save.
+   **Pass:** an *Account ready* dialog shows `Username: tprovision` and a 12-character password.
+   Shown once — copy it.
+2. Sign out, sign in as `tprovision` with that password.
+   **Pass:** Keycloak forces an **Update password** screen (the credential is issued `temporary`),
+   and after setting one you land on My Medical History for Test Provision.
+3. As admin: add a second patient, `Records Only`, EGN `9901017778`, **no username**.
+   **Pass:** saves with no credentials dialog; `keycloak_id` is NULL.
+4. Edit that patient, add username `ronly` → Save.
+   **Pass:** credentials dialog appears. Granting access later is what makes a blank username a
+   deferral rather than a dead end.
+5. Edit **Test Provision** (now linked).
+   **Pass:** the username box is **disabled** with an amber note pointing at Re-issue password —
+   a second account would strand the first, so the server refuses it and the form says so first.
+6. Click **Re-issue password**, confirm.
+   **Pass:** the dialog reads `Username: tprovision` — the real Keycloak username, read back from
+   Keycloak, not the person's name and not the account UUID.
+7. Edit Test Provision → clear the **Existing account UUID** box → Save.
+   **Pass:** the record is unlinked, and the `tprovision` account **loses `PATIENT`** while the
+   account itself survives. Deleting the record does the same.
+
+Check the role with the admin API (get `$TOKEN` from §5, or use the Keycloak console):
+
+```bash
+ID=$(curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8081/admin/realms/medical-records/users?username=tprovision" | python -c "import sys,json;d=json.load(sys.stdin);print(d[0]['id'] if d else 'NONE')")
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8081/admin/realms/medical-records/users/$ID/role-mappings/realm" | python -c "import sys,json;print([r['name'] for r in json.load(sys.stdin)])"
+```
+
+> **The account outliving the record is deliberate.** Whether to delete, disable or merely de-role an
+> identity is identity-provider policy; revoking the role is enough to cut the stale account off from
+> clinical data without this application destroying an identity it does not own.
+
+**Persistence (4.4k)** — the point of putting Keycloak on MySQL.
+
+```bash
+docker compose down          # NO -v
+docker compose up -d --wait
+```
+
+**Pass:** `ronly` still exists with `PATIENT`, and signing in as them still works. If the account has
+vanished, Keycloak is still on in-container H2.
 
 **Audit trail (4.4i)** — as admin, open **Audit Logs** after running Phase 4.1.
 
@@ -257,22 +361,28 @@ The automated suite asserts these at the API layer; this phase confirms the UI d
 
 Get a bearer token to probe the API directly:
 
-```bash
-curl -s -X POST "http://localhost:8081/realms/medical-records/protocol/openid-connect/token" \
-  -d "client_id=frontend-client" -d "grant_type=password" \
-  -d "username=patient" -d "password=patient" | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])"
-```
-
-> **This no longer works, by design.** The manual pass below was run and completed while
-> `directAccessGrantsEnabled` was true on `frontend-client`. It has since been set to `false`:
-> the password grant POSTs credentials straight to the token endpoint, bypassing the login page
-> and with it brute-force detection, required actions and MFA, and OAuth 2.1 removes the grant
-> altogether. The command above now returns `unauthorized_client`, which is the correct result.
+> **The password grant is disabled — take the token from the browser instead.**
 >
-> To re-run §5.1, temporarily set `"directAccessGrantsEnabled": true` on `frontend-client` in
-> `realm-export.json`, restart Keycloak, and set it back afterwards. Note that once Keycloak has a
-> persistent database, `--import-realm` only imports when the realm is absent, so the edit needs a
-> realm re-import or a change in the admin console to take effect.
+> This plan originally obtained a token with `grant_type=password` against `frontend-client`.
+> `directAccessGrantsEnabled` is now `false`: that grant POSTs credentials straight to the token
+> endpoint, bypassing the login page and with it brute-force detection, required actions and MFA,
+> and OAuth 2.1 removes it. The old command returns `unauthorized_client`, which is correct.
+>
+> Sections 5.1–5.3 still need a bearer token. Sign in through the UI as the role you want, then in
+> the browser console:
+>
+> ```js
+> copy(keycloak.token)     // or: console.log(keycloak.token)
+> ```
+>
+> Paste it into your shell. This is *better* evidence than the old approach — it is the token the
+> application actually issued through the authorization-code flow, rather than one minted by a
+> back door. Tokens expire in ~5 minutes; re-copy when a request starts returning 401.
+>
+> ```bash
+> TOKEN='paste-here'
+> curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/patients
+> ```
 >
 > The automated suite is unaffected — `TestAuth` builds `JwtAuthenticationToken` instances directly
 > and never contacts Keycloak.
@@ -324,7 +434,13 @@ With a token for `doctor` (Dr. Georgi Ivanov, doctor id 1):
 | 5.4b | `GET /api/patients/abc` | **400** `TYPE_MISMATCH` |
 | 5.4c | `POST /api/patients` with `{}` | **400** `VALIDATION_ERROR` naming the missing fields |
 | 5.4d | `POST /api/patients` with a malformed body | **400** `MALFORMED_REQUEST` |
-| 5.4e | Create a patient with a duplicate EGN | **409** `DATA_CONFLICT` |
+| 5.4e | **Admin** creates a patient with a duplicate EGN | **409** `DATA_CONFLICT` |
+| 5.4f | **Self-register** with an EGN an admin already recorded | **400** — *"A patient record with this EGN already exists. Ask an administrator to link it to your account."* |
+| 5.4g | Provision an account with a username the realm already has | **409** `USERNAME_TAKEN` |
+
+> 5.4f is deliberately not the generic conflict: someone whose record staff entered before they
+> signed up would otherwise be stuck holding no role, with a message that named no way forward.
+> The way out is an administrator linking the existing record, so the message says so.
 
 **Pass criteria for all:** a JSON body with `code`, `message`, `path`, `timestamp` — never an HTML error page or a Java stack trace.
 
@@ -339,7 +455,7 @@ With a token for `doctor` (Dr. Georgi Ivanov, doctor id 1):
 | 6.1a | Book two visits for the same doctor, same date and time | Rejected — *"Doctor is already booked"* |
 | 6.1b | Book two visits for the same patient, same date and time | Rejected — *"Patient already has an appointment"* |
 | 6.1c | Edit a patient and change their EGN | Rejected — *"EGN cannot be changed after registration"* |
-| 6.1d | Assign a non-GP (Dr. Dimitar Petrov) as a patient's GP | Rejected — *"is not a General Practitioner"* |
+| 6.1d | Assign a non-GP (Dr. Dimitar Petrov) as a patient's GP | Rejected — *"is not a General Practitioner"*. **API-level only:** the GP dropdown now lists GPs exclusively, so the UI no longer offers the invalid choice. Test with a direct `PUT /api/patients/1` naming `gpDoctorId: 2`. |
 | 6.1e | Issue a sick leave of 0 days, or 400 days | Rejected by validation |
 | 6.1f | Self-register twice with the same account | Rejected — *"A profile already exists for this account"* |
 
@@ -403,11 +519,14 @@ Medical text is entered by doctors and rendered across several screens.
 | 1. Automated suite green | ☐ | |
 | 2. Stack starts, schema validates, seed data correct | ☐ | |
 | 3. All three roles sign in and land correctly | ☐ | |
+| 3.1d Sign-in completes (which is itself proof PKCE holds) | ☐ | |
 | 3.4 Patient self-registration grants the role in Keycloak | ☐ | |
 | 4.1 CRUD works for all five entities | ☐ | |
 | 4.2 Role model behaves per §2 | ☐ | |
 | 4.3 All ten reports produce correct data | ☐ | |
 | 4.4h Doctor approval lifecycle completes and the banner clears | ☐ | |
+| 4.4j Provisioning, re-issue, link/unlink and role revocation | ☐ | |
+| 4.4k Runtime-created accounts survive `docker compose down` | ☐ | |
 | 5. Every negative case is refused with the right status | ☐ | |
 | 6. Validation, insurance rule, escaping, pagination all hold | ☐ | |
 
@@ -417,7 +536,12 @@ Medical text is entered by doctors and rendered across several screens.
 
 ## Appendix A — Test personas
 
-Realm `medical-records`, seeded from `realm-export.json` on first Keycloak start.
+Realm `medical-records`, seeded from `realm-export.json` **the first time Keycloak starts against an
+empty database**. Because Keycloak now persists, a later `docker compose up` does not re-import —
+see §2.2.
+
+The sign-in, registration and update-password screens use the `medical-records` login theme
+(`keycloak-theme/`), so they carry the application's own styling rather than stock Keycloak.
 
 | Username | Password | Role | Linked record |
 |---|---|---|---|
