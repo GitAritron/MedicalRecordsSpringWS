@@ -40,13 +40,33 @@ public class AuditLogService {
     public void log(Authentication authentication, String action, String entityType,
                     Long entityId, String entityLabel) {
         AuditLog log = new AuditLog();
-        String actor = authorizationService.extractSubject(authentication);
-        log.setActor(actor == null ? "system" : actor);
+        log.setActor(resolveActor(authentication));
         log.setAction(action);
         log.setEntityType(entityType);
         log.setEntityId(entityId);
         log.setEntityLabel(truncate(entityLabel));
         auditLogRepository.save(log);
+    }
+
+    /**
+     * Who performed the action, named the way a person reads it.
+     * <p>
+     * WHY the username rather than the token subject: an audit trail exists to be read, and the
+     * subject is a Keycloak UUID — a column of them tells an administrator nothing about who did
+     * what. {@code SecurityConfig} builds the authentication with {@code preferred_username} as its
+     * name, so that is available here at no cost. The subject remains the fallback for a token that
+     * carries no username, and "system" for actions with no authenticated actor at all.
+     */
+    private String resolveActor(Authentication authentication) {
+        if (authentication == null) {
+            return "system";
+        }
+        String username = authentication.getName();
+        if (username != null && !username.isBlank()) {
+            return username;
+        }
+        String subject = authorizationService.extractSubject(authentication);
+        return subject == null ? "system" : subject;
     }
 
     /** Keeps the label inside the column width; the audit entry must never fail on its own field. */

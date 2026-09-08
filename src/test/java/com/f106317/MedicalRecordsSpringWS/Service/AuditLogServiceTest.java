@@ -4,6 +4,7 @@ import com.f106317.MedicalRecordsSpringWS.Data.Entity.AuditLog;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.AuditLogRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -31,12 +32,15 @@ class AuditLogServiceTest {
 
     @Test
     void log_savesAuditEntry() {
-        when(authorizationService.extractSubject(null)).thenReturn(null);
         when(auditLogRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         auditLogService.log(null, "CREATE", "Doctor", 1L, "Dr. Georgi Ivanov");
 
-        verify(auditLogRepository, times(1)).save(any(AuditLog.class));
+        // An unauthenticated action is recorded as "system" rather than dropped: the trail has to
+        // account for the change either way.
+        ArgumentCaptor<AuditLog> saved = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogRepository, times(1)).save(saved.capture());
+        assertEquals("system", saved.getValue().getActor());
     }
 
     @Test

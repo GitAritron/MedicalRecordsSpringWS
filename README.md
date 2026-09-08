@@ -152,17 +152,34 @@ asks for, but the reader is shown the data rather than asked to trust a verdict 
 Report **f** includes sick leave alongside diagnosis and treatment, covering *"излизал ли е в
 болнични пациентът и за колко време"*.
 
-**Beyond the ten:** an **Insurance Months Covered per Patient** report (`GET /api/reports/patients/insurance`)
-gives the *справка* §1 requires of patient records — every patient with months covered out of six
-and a verdict. The patient's own dashboard shows the same check for themselves, now reporting how
-far short the coverage falls rather than a bare yes or no.
+**Beyond the ten:** an **Unpaid Months per Patient** report
+(`GET /api/reports/patients/insurance`) — the *справка* §1 requires of patient records. It names
+*which* of the last six months each patient still owes, listing only those who owe something.
+"You are three months short" does not tell a patient what to pay; the months do.
+
+The patient's own dashboard shows the same check for themselves, and both patient lists carry the
+verdict as a column, so staff see it without opening anything.
+
+**No month count is reported anywhere.** The rule works on an unbroken run, and a run understates a
+patient who paid on either side of a gap — four of six months paid with a hole in the middle scores
+one, which reads far worse than their position is. That number needs explaining wherever it appears,
+so the verdict decides the question and the months say what is outstanding.
+
+Coverage is an **unbroken run** of paid months, not a tally of six. The two agree on the verdict but
+not on anyone else, and the run is the number a person acts on: a patient who stopped paying two
+months ago is not covered, however many older months they paid, while one who missed only the oldest
+month very nearly is. A count of "three" describes both.
+
+The run is anchored at the current month when it has been paid and at the previous one when it has
+not — **the current month is not over, so an unpaid one is not yet a lapse**, exactly as this
+month's bill is not yet overdue. Paying simply keeps the run going.
 
 Every report exports to CSV from the button above the results table.
 
 ### §4 — Technology
 
 REST services, MySQL, a user interface, Bean Validation on every request DTO, a
-`@ControllerAdvice` exception handler, 289 automated tests, and Keycloak for user management.
+`@ControllerAdvice` exception handler, 292 automated tests, and Keycloak for user management.
 
 ---
 
@@ -310,7 +327,7 @@ must not be able to leave a real account created or a live user de-roled.
 ./gradlew test
 ```
 
-289 tests, no Docker required — the suite runs against H2 with a mocked identity provider. A JaCoCo
+292 tests, no Docker required — the suite runs against H2 with a mocked identity provider. A JaCoCo
 report is written to `build/reports/jacoco/test/html/index.html`.
 
 | Suite | Covers |

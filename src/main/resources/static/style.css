@@ -365,15 +365,36 @@ h4 {
 /* Action Buttons in Tables */
 .action-btn {
     padding: 4px 8px;
-    margin: 0 4px;
+    /* Trailing gap only. `margin: 0 4px` also indented the first button, so a row's controls never
+       lined up with the column heading above them. */
+    margin: 0 6px 0 0;
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.85rem;
     font-weight: 600;
+    white-space: nowrap;
 }
-.btn-edit { background-color: #f59e0b; color: white; }
-.btn-delete { background-color: #ef4444; color: white; }
+
+.action-btn:last-child {
+    margin-right: 0;
+}
+
+/*
+ * Keep a row's controls on one line.
+ * WHY :has() rather than a class: the buttons are written inline at a dozen call sites with no
+ * wrapper to hook, and targeting td:last-child would also stop wrapping in tables whose final
+ * column is ordinary text. This matches only cells that actually contain controls.
+ */
+.data-table td:has(> .action-btn) {
+    white-space: nowrap;
+}
+/* One class per action, so a call site says what the button does rather than what colour it is. */
+.btn-edit      { background-color: #f59e0b; color: white; }
+.btn-delete    { background-color: #ef4444; color: white; }
+.btn-view      { background-color: #0284c7; color: white; }
+.btn-insurance { background-color: #059669; color: white; }
+.btn-approve   { background-color: #10b981; color: white; }
 .btn-add-new { margin-bottom: 16px; display: inline-block; }
 
 /* Reports Dashboard Grid - Dark Glassmorphism Aesthetic */
@@ -575,23 +596,20 @@ h4 {
 
 #hero {
     text-align: center;
+    /* The panel holds only a title and two buttons, so it needs the vertical room to read as a
+       deliberate landing page rather than a squashed one. */
+    padding: 3.5rem 2rem;
 }
 
 #hero h1 {
     font-size: 2.4rem;
+    /* Sets the whole gap down to the buttons: the h1 and .hero-actions are the only two things in
+       the panel, so this is the spacing. */
+    margin-bottom: 2rem;
     background: linear-gradient(to right, #60A5FA, #A78BFA);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 0.75rem;
-}
-
-.hero-lead {
-    color: #94A3B8;
-    font-size: 1.05rem;
-    line-height: 1.6;
-    max-width: 40rem;
-    margin: 0 auto 1.75rem;
 }
 
 .hero-actions {
@@ -599,52 +617,6 @@ h4 {
     gap: 1rem;
     justify-content: center;
     flex-wrap: wrap;
-}
-
-.hero-note {
-    color: #64748B;
-    font-size: 0.85rem;
-    margin-top: 1rem;
-}
-
-.role-grid {
-    display: grid;
-    /* Three fixed columns rather than auto-fit: with exactly three cards, any min-width you pick
-       leaves a band of viewport widths where the third card drops onto a row by itself, which
-       reads as a mistake. Going straight from three to one at the existing breakpoint skips it. */
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-    margin-top: 2.5rem;
-    text-align: left;
-}
-
-.role-card {
-    background: rgba(15, 23, 42, 0.5);
-    border: 1px solid var(--glass-border);
-    border-radius: 12px;
-    padding: 1.25rem;
-}
-
-.role-card h3 {
-    color: #38BDF8;
-    font-size: 0.95rem;
-    margin-bottom: 0.5rem;
-}
-
-.role-card p {
-    color: #94A3B8;
-    font-size: 0.85rem;
-    line-height: 1.55;
-    margin: 0;
-}
-
-/* Landing-page responsive rules.
-   These live at the end of the file, after .role-grid is defined: an identical-specificity rule
-   inside the earlier @media block would be overridden by the later declaration at every width,
-   which is exactly what happened the first time. The sign-in buttons need no rule — .hero-actions
-   already wraps them. */
-@media (max-width: 768px) {
-    .role-grid { grid-template-columns: 1fr; }
 }
 
 /* Two short fields side by side, so the forms are shorter than the viewport instead of scrolling.
@@ -664,22 +636,33 @@ html {
     scrollbar-color: #475569 transparent;
 }
 
-.crud-modal {
+.crud-modal,
+#content-area {
     scrollbar-width: thin;
     scrollbar-color: #475569 transparent;
 }
 
 .crud-modal::-webkit-scrollbar,
+#content-area::-webkit-scrollbar,
 html::-webkit-scrollbar {
     width: 12px;
+    height: 12px;
 }
 
 .crud-modal::-webkit-scrollbar-track,
+#content-area::-webkit-scrollbar-track,
 html::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .crud-modal::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 999px;
+    border: 3px solid #1E293B;
+}
+
+/* The table scroller sits on the panel, not the modal, so its thumb borders against that instead. */
+#content-area::-webkit-scrollbar-thumb {
     background: #475569;
     border-radius: 999px;
     border: 3px solid #1E293B;
@@ -692,6 +675,7 @@ html::-webkit-scrollbar-thumb {
 }
 
 .crud-modal::-webkit-scrollbar-thumb:hover,
+#content-area::-webkit-scrollbar-thumb:hover,
 html::-webkit-scrollbar-thumb:hover {
     background: #64748B;
 }
@@ -707,3 +691,85 @@ html::-webkit-scrollbar-thumb:hover {
    borrowing one of the four requirement groups' colours. */
 .report-card[data-group="insurance"]::before   { background: linear-gradient(90deg, #2DD4BF, #0D9488); }
 .report-card[data-group="insurance"] .report-group { color: #2DD4BF; }
+
+/*
+ * The dashboard holds data tables, not prose. 800px is a reading width — at seven columns the
+ * Visits table simply grew past the panel and its buttons rendered outside the rounded border.
+ * A wider panel fits them; overflow-x on the content area catches whatever still does not, so a
+ * wide table scrolls inside the panel rather than spilling out of it.
+ */
+#dashboard {
+    /* No reading-width cap: this panel holds tables, and 800px forced a seven-column one past its
+       own border. It now fills the window minus main's padding, so the columns simply fit. */
+    max-width: none;
+}
+
+#content-area {
+    overflow-x: auto;
+}
+
+/* ── Report filter panels ─────────────────────────────────────────────────
+   These were built with the same five inline style strings repeated at every call site, so a
+   change to the panel look meant editing five places and hoping they stayed identical. */
+.filter-panel {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid var(--glass-border);
+    padding: 1.25rem;
+    border-radius: 12px;
+    margin-top: 1rem;
+}
+
+.filter-panel h4 {
+    color: #F8FAFC;
+    margin-bottom: 1rem;
+}
+
+.filter-row {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.filter-field {
+    flex: 1;
+    min-width: 220px;
+}
+
+.filter-field label,
+.filter-row label {
+    display: block;
+    color: #94A3B8;
+    margin-bottom: 0.4rem;
+    font-size: 0.88rem;
+}
+
+.filter-input {
+    padding: 0.5rem;
+    border-radius: 6px;
+    border: 1px solid #475569;
+    background: #0F172A;
+    color: white;
+}
+
+.filter-field .filter-input {
+    width: 100%;
+}
+
+/* ── Shared text and control colours ──────────────────────────────────── */
+.error-text  { color: #EF4444; }
+.muted       { color: #64748B; }
+.muted-label { color: #94A3B8; }
+
+/* The ✕ that removes a diagnosis, prescription or sick leave from a visit. */
+.btn-remove {
+    background: none;
+    border: none;
+    color: #EF4444;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+/* Verdict text in list cells — green for good standing, red for not. */
+.status-ok  { color: #10B981; font-weight: 600; }
+.status-bad { color: #EF4444; font-weight: 600; }

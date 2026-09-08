@@ -69,7 +69,7 @@ function register() { keycloak.register(); }
 function logout() { keycloak.logout(); }
 
 // Escapes text for interpolation into HTML. The previous implementation round-tripped through
-// div.textContent -> div.innerHTML, which escapes & < > but leaves quotes untouched — so any value
+// div.textContent -> div.innerHTML, which escapes & <> but leaves quotes untouched — so any value
 // placed inside a quoted attribute (value="${esc(x)}") could still break out of it.
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 function esc(str) {
@@ -267,7 +267,7 @@ async function renderNewUserRoleSelection() {
                 contentArea.innerHTML = `
                     <div style="max-width: 550px; margin: 2rem auto; text-align: center; background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 2rem; border-radius: 12px;">
                         <h3 style="color: #F59E0B;">Application under review</h3>
-                        <p style="color: #94A3B8; margin-top: 0.75rem;">Your doctor profile has been submitted. An administrator still needs to approve it before you can sign in as a doctor.</p>
+                        <p style="color: #94A3B8; margin-top: 0.75rem;">An administrator still needs to approve your application.</p>
                         <p style="color: #64748B; font-size: 0.85rem; margin-top: 1rem;">Once approved, sign out and back in to pick up your new role.</p>
                         <button class="btn btn-secondary" style="margin-top: 1.25rem;" onclick="logout()">Sign out</button>
                     </div>`;
@@ -334,8 +334,7 @@ async function showPatientRegistrationForm() {
                     <input type="text" id="selfEgn" required pattern="\\d{10}" title="Must be exactly 10 digits">
                 </div>
                 <p style="color: #94A3B8; font-size: 0.85rem; margin: 0.75rem 0 0;">
-                    You will choose your general practitioner from your dashboard once registration
-                    is complete.
+                    You will choose your GP from your dashboard afterwards.
                 </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Complete Registration</button>
             </form>
@@ -358,8 +357,7 @@ function showDoctorRegistrationForm() {
                     <input type="text" id="selfDocLastName" value="${esc(keycloak.tokenParsed.family_name || '')}" required>
                 </div>
                 <p style="color: #94A3B8; font-size: 0.85rem; margin: 0.75rem 0 0;">
-                    An administrator reviews every application. They grant your Doctor role and, if
-                    applicable, register you as a General Practitioner.
+                    An administrator reviews every application before your account is activated.
                 </p>
                 <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Submit Application</button>
             </form>
@@ -429,7 +427,7 @@ async function submitSelfDoctorRegistration(e) {
         container.innerHTML = `
             <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10B981; color: #10B981; padding: 1.5rem; border-radius: 12px; text-align: center;">
                 <h4>Registration Submitted!</h4>
-                <p>Your doctor profile has been created and is awaiting approval. An administrator will grant your Doctor security role in Keycloak, and register you as a General Practitioner if that applies. You will not be able to sign in as a doctor until then.</p>
+                <p>Your application has been submitted. An administrator reviews it before your account is activated.</p>
             </div>
         `;
     } catch (err) { alert("Registration Error: " + err.message); }
@@ -513,6 +511,41 @@ async function submitSpecForm(e) {
             msgEl.innerHTML = `<p style="color: #EF4444; margin: 0.5rem 0;">Error: ${esc(err.message)}</p>`;
         }
     }
+}
+
+/**
+ * Insurance standing for every patient, keyed by id, in one request.
+ * WHY not one call per row: the list views need it for the whole table, and asking per patient
+ * would be a request each. Returns an empty map if the check fails, so a list still renders.
+ */
+async function fetchInsuranceStatuses() {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/reports/patients/insurance?size=100`);
+        if (!res.ok) return {};
+        const rows = await res.json();
+        return Object.fromEntries(rows.map(r => [r.patientId, r]));
+    } catch (e) {
+        console.error('Could not load insurance status', e);
+        return {};
+    }
+}
+
+/**
+ * Insurance as a compact cell: the verdict, and how much is outstanding.
+ * WHY the number of months owed rather than the unbroken run: the run counts only consecutive
+ * months, so a patient who paid four of the six with a gap in the middle shows as "1/6" — which
+ * reads as far worse than their position is. The count of unpaid months is the same fact stated in
+ * a way that cannot mislead, and it is the one anybody acts on.
+ */
+function insuranceCell(status) {
+    if (!status) return '<span class="muted">—</span>';
+    const owed = (status.unpaidMonths || []).length;
+    const suffix = owed === 0
+        ? ''
+        : ` <span class="muted" style="font-size:0.85em;">${owed} month${owed === 1 ? '' : 's'} owed</span>`;
+    return status.insured
+        ? `<span class="status-ok">Insured</span>${suffix}`
+        : `<span class="status-bad">Not insured</span>${suffix}`;
 }
 
 // ================= PATIENT CRUD =================
@@ -616,21 +649,22 @@ async function loadAllPatients() {
         const response = await fetchWithAuth(`${API_BASE}/patients`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         patientsList = await response.json();
+        const insurance = await fetchInsuranceStatuses();
 
         let html = `<h3>All Patients</h3>`;
         if (currentUserRole === 'ADMIN') {
             html += `<button class="btn btn-primary btn-add-new" onclick="openAddPatientModal()">+ Add New Patient</button>`;
         }
 
-        html += `<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th><th onclick="sortTable(2, this)">GP Doctor</th><th>Actions</th></tr></thead><tbody>`;
+        html += `<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th><th onclick="sortTable(2, this)">GP Doctor</th><th onclick="sortTable(3, this)">Insurance</th><th>Actions</th></tr></thead><tbody>`;
 
         patientsList.forEach(p => {
             const safeName = esc(`${p.firstName} ${p.lastName}`);
-            html += `<tr><td>${safeName}</td><td>${esc(p.egn)}</td><td>${esc(p.gpDoctorName || 'Not assigned')}</td>`;
+            html += `<tr><td>${safeName}</td><td>${esc(p.egn)}</td><td>${esc(p.gpDoctorName || 'Not assigned')}</td><td>${insuranceCell(insurance[p.id])}</td>`;
             html += `<td>`;
-            html += `<button class="action-btn" style="background:#0284C7;color:white;" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `;
+            html += `<button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `;
             if (currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR') {
-                html += `<button class="action-btn" style="background:#059669;color:white;" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button> `;
+                html += `<button class="action-btn btn-insurance" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button> `;
             }
             if (currentUserRole === 'ADMIN') {
                 html += `<button class="action-btn btn-edit" onclick="editPatient(${p.id})">Edit</button> `;
@@ -641,7 +675,7 @@ async function loadAllPatients() {
         html += '</tbody></table>';
         contentArea.innerHTML = html;
     } catch (error) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patients: ${esc(error.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading patients: ${esc(error.message)}</p>`;
     }
 }
 
@@ -747,7 +781,7 @@ async function submitDoctorForm(e) {
  */
 function syncAccountFields(prefix) {
     const usernameInput = document.getElementById(prefix + 'Username');
-    const linked = document.getElementById(prefix + 'KeycloakId').value.trim().length > 0;
+    const linked = document.getElementById(prefix + 'KeycloakId').value.trim().length> 0;
 
     usernameInput.disabled = linked;
     if (linked) usernameInput.value = '';
@@ -821,21 +855,21 @@ async function loadDoctorsDirectory() {
         // Clinical staff get an Actions column; only admins get the editing controls inside it.
         const showActions = currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR';
 
-        html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">GP Status</th><th onclick="sortTable(2, this)">Specializations</th>';
+        html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">ID</th><th onclick="sortTable(1, this)">Name</th><th onclick="sortTable(2, this)">GP Status</th><th onclick="sortTable(3, this)">Specializations</th>';
         if (showActions) html += `<th>Actions</th>`;
         html += `</tr></thead><tbody>`;
 
         doctorsList.forEach(doc => {
-            const specs = doc.specializations && doc.specializations.length > 0
+            const specs = doc.specializations && doc.specializations.length> 0
                 ? doc.specializations.map(s => esc(s.name || s)).join(', ')
                 : '—';
-            html += `<tr><td>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)}</td><td>${doc.isGP ? 'Yes' : 'No'}</td><td>${specs}</td>`;
+            html += `<tr><td>${doc.id}</td><td>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)}</td><td>${doc.isGP ? 'Yes' : 'No'}</td><td>${specs}</td>`;
             if (showActions) {
                 html += `<td>`;
                 // Requirement 3c: list of patients registered with a given GP. Only general
                 // practitioners have a patient roster, so the button belongs on those rows.
                 if (doc.isGP) {
-                    html += `<button class="action-btn" style="background:#0284C7;color:white;" onclick="viewGpPatients(${doc.id})">Patients</button> `;
+                    html += `<button class="action-btn btn-view" onclick="viewGpPatients(${doc.id})">Patients</button> `;
                 }
                 if (currentUserRole === 'ADMIN') {
                     html += `<button class="action-btn btn-edit" onclick="editDoctor(${doc.id})">Edit</button>
@@ -848,7 +882,7 @@ async function loadDoctorsDirectory() {
         html += '</tbody></table>';
         contentArea.innerHTML = html;
     } catch (error) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading doctors: ${esc(error.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading doctors: ${esc(error.message)}</p>`;
     }
 }
 
@@ -1007,11 +1041,11 @@ function showClinicalDataSection(visit) {
 function renderExistingClinicalData(visit) {
     // Diagnoses
     const diagList = document.getElementById('diagnosisList');
-    if (visit.diagnoses && visit.diagnoses.length > 0) {
+    if (visit.diagnoses && visit.diagnoses.length> 0) {
         diagList.innerHTML = visit.diagnoses.map(d =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #1E3A5F; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(d.name)}</span>
-                <button type="button" onclick="removeDiagnosis(${d.id})" style="background: none; border: none; color: #EF4444; cursor: pointer; font-size: 1rem;">✕</button>
+                <button type="button" onclick="removeDiagnosis(${d.id})" class="btn-remove">✕</button>
             </div>`
         ).join('');
     } else {
@@ -1020,11 +1054,11 @@ function renderExistingClinicalData(visit) {
 
     // Prescriptions
     const prescList = document.getElementById('prescriptionList');
-    if (visit.prescriptions && visit.prescriptions.length > 0) {
+    if (visit.prescriptions && visit.prescriptions.length> 0) {
         prescList.innerHTML = visit.prescriptions.map(p =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(16, 185, 129, 0.1); border: 1px solid #065F46; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(p.note)}</span>
-                <button type="button" onclick="removePrescription(${p.id})" style="background: none; border: none; color: #EF4444; cursor: pointer; font-size: 1rem;">✕</button>
+                <button type="button" onclick="removePrescription(${p.id})" class="btn-remove">✕</button>
             </div>`
         ).join('');
     } else {
@@ -1038,7 +1072,7 @@ function renderExistingClinicalData(visit) {
         slDisplay.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(245, 158, 11, 0.1); border: 1px solid #92400E; padding: 0.4rem 0.75rem; border-radius: 8px;">
                 <span style="color: #E2E8F0;">From ${fmtDate(visit.sickLeave.validFrom)} for ${visit.sickLeave.validForDays} days</span>
-                <button type="button" onclick="removeSickLeave(${visit.sickLeave.id})" style="background: none; border: none; color: #EF4444; cursor: pointer; font-size: 1rem;">✕</button>
+                <button type="button" onclick="removeSickLeave(${visit.sickLeave.id})" class="btn-remove">✕</button>
             </div>`;
         slForm.style.display = 'none';
     } else {
@@ -1154,14 +1188,15 @@ async function loadDoctorVisits() {
             html += `<button class="btn btn-primary btn-add-new" onclick="openAddVisitModal()">+ Add New Visit</button>`;
         }
 
-        html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Patient</th><th onclick="sortTable(2, this)">Doctor</th><th onclick="sortTable(3, this)">Diagnosis</th><th onclick="sortTable(4, this)">Prescription</th>';
+        html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Patient</th><th onclick="sortTable(2, this)">Doctor</th><th onclick="sortTable(3, this)">Diagnosis</th><th onclick="sortTable(4, this)">Prescription</th><th onclick="sortTable(5, this)">Sick Leave</th>';
         if (currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR') html += `<th>Actions</th>`;
         html += `</tr></thead><tbody>`;
 
         visitsList.forEach(v => {
-            const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
-            const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
-            html += `<tr><td>${esc(fmtDate(v.visitDate))} ${esc(fmtTime(v.visitTime))}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td><td>${esc(rxNotes)}</td>`;
+            const diagNames = v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
+            const rxNotes = v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
+            const slInfo = v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—';
+            html += `<tr><td>${esc(fmtDate(v.visitDate))} ${esc(fmtTime(v.visitTime))}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td><td>${esc(rxNotes)}</td><td>${esc(slInfo)}</td>`;
 
             if (currentUserRole === 'ADMIN' || (currentUserRole === 'DOCTOR' && v.doctorId === currentDoctorId)) {
                 html += `<td>
@@ -1176,7 +1211,7 @@ async function loadDoctorVisits() {
         html += '</tbody></table>';
         contentArea.innerHTML = html;
     } catch (error) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading visits: ${esc(error.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading visits: ${esc(error.message)}</p>`;
     }
 }
 
@@ -1188,7 +1223,7 @@ async function loadMyPatients() {
     try {
         const docResponse = await fetchWithAuth(`${API_BASE}/doctors/keycloak/${keycloak.tokenParsed.sub}`);
         if (!docResponse.ok) {
-            contentArea.innerHTML = `<p style="color: #EF4444;">Could not find your doctor profile in the database.</p>`;
+            contentArea.innerHTML = `<p class="error-text">Could not find your doctor profile in the database.</p>`;
             return;
         }
         const doctor = await docResponse.json();
@@ -1197,20 +1232,27 @@ async function loadMyPatients() {
         const patResponse = await fetchWithAuth(`${API_BASE}/doctors/${doctor.id}/patients`);
         if (!patResponse.ok) throw new Error(`HTTP ${patResponse.status}`);
         const patients = await patResponse.json();
+        const insurance = await fetchInsuranceStatuses();
 
         let html = `<h3>My Patients (Dr. ${esc(doctor.firstName)} ${esc(doctor.lastName)})</h3>`;
         if (patients.length === 0) {
             html += '<p>No patients assigned to you.</p>';
         } else {
-            html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th></tr></thead><tbody>';
+            // Same columns and actions as All Patients minus the GP column, which would repeat this
+            // doctor's own name on every row. A GP looking at their roster needs the same two things
+            // as anywhere else: the visit history, and whether the patient is covered.
+            html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th><th onclick="sortTable(2, this)">Insurance</th><th>Actions</th></tr></thead><tbody>';
             patients.forEach(p => {
-                html += `<tr><td>${esc(p.firstName)} ${esc(p.lastName)}</td><td>${esc(p.egn)}</td></tr>`;
+                html += `<tr><td>${esc(p.firstName)} ${esc(p.lastName)}</td><td>${esc(p.egn)}</td>`
+                     + `<td>${insuranceCell(insurance[p.id])}</td>`
+                     + `<td><button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `
+                     + `<button class="action-btn btn-insurance" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button></td></tr>`;
             });
             html += '</tbody></table>';
         }
         contentArea.innerHTML = html;
     } catch (error) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patients: ${esc(error.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading patients: ${esc(error.message)}</p>`;
     }
 }
 
@@ -1220,7 +1262,7 @@ async function loadPatientHistory() {
     try {
         const pResponse = await fetchWithAuth(`${API_BASE}/patients/keycloak/${keycloak.tokenParsed.sub}`);
         if (!pResponse.ok) {
-            contentArea.innerHTML = `<p style="color: #EF4444;">Could not find your patient profile in the database.</p>`;
+            contentArea.innerHTML = `<p class="error-text">Could not find your patient profile in the database.</p>`;
             return;
         }
         const patient = await pResponse.json();
@@ -1239,9 +1281,6 @@ async function loadPatientHistory() {
         // Three states, not two. insuranceStatus stays null when the check could not be run, and
         // reporting that as "Lapsed / Unpaid" told patients their contributions were unpaid on
         // nothing more than a failed request.
-        //
-        // The endpoint returns the month count alongside the verdict, so the badge can say how far
-        // short the coverage falls — "1 of 6 months" is a different conversation from "5 of 6".
         const badge = (bg, border, colour, text) =>
             `<span style="display:inline-block; padding: 0.25rem 0.75rem; background: ${bg}; border: 1px solid ${border}; color: ${colour}; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">${text}</span>`;
 
@@ -1249,10 +1288,19 @@ async function loadPatientHistory() {
         if (insuranceStatus === null || typeof insuranceStatus !== 'object') {
             insBadge = badge('rgba(100, 116, 139, 0.2)', '#64748B', '#94A3B8', '? Insurance status unavailable');
         } else {
-            const months = `${insuranceStatus.coveredMonths} of ${insuranceStatus.requiredMonths} months paid`;
+            // The run is deliberately not shown here. It counts unbroken months, so a patient who
+            // paid four of six with a gap in the middle reads as "1 of 6" — an understatement next
+            // to a list naming only two unpaid months. The verdict plus those months says
+            // everything without a number that has to be explained.
+            const owed = (insuranceStatus.unpaidMonths || [])
+                .map(m => fmtMonth(m.year, m.month)).join(', ');
             insBadge = insuranceStatus.insured
-                ? badge('rgba(16, 185, 129, 0.2)', '#10B981', '#10B981', `✓ Health Insurance Active — ${esc(months)}`)
-                : badge('rgba(239, 68, 68, 0.2)', '#EF4444', '#EF4444', `✕ Health Insurance Lapsed — ${esc(months)}`);
+                ? badge('rgba(16, 185, 129, 0.2)', '#10B981', '#10B981', '✓ Health Insurance Active')
+                : badge('rgba(239, 68, 68, 0.2)', '#EF4444', '#EF4444', '✕ Health Insurance Lapsed');
+            // Naming the months turns "you are short" into something the patient can act on.
+            if (owed) {
+                insBadge += `<div class="muted" style="font-size: 0.8rem; margin-top: 0.35rem;">Not yet paid: ${esc(owed)}</div>`;
+            }
         }
 
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
@@ -1273,8 +1321,8 @@ async function loadPatientHistory() {
         } else {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
-                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
-                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
+                const diagNames = v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
+                const rxNotes = v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
                 const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });
@@ -1282,7 +1330,7 @@ async function loadPatientHistory() {
         }
         contentArea.innerHTML = html;
     } catch (error) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patient history: ${esc(error.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading patient history: ${esc(error.message)}</p>`;
     }
 }
 
@@ -1300,14 +1348,14 @@ async function renderPendingApprovals() {
             `<tr>
                 <td>Dr. ${esc(d.doctorName)}</td>
                 <td>${d.registeredAt ? esc(fmtDate(d.registeredAt)) : '—'}</td>
-                <td><button class="action-btn" style="background:#10B981;color:white;" onclick="approveDoctor(${d.doctorId})">Approve</button></td>
+                <td><button class="action-btn btn-approve" onclick="approveDoctor(${d.doctorId})">Approve</button></td>
             </tr>`
         ).join('');
 
         return `
             <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
                 <h4 style="color: #F59E0B; margin-bottom: 0.75rem;">Doctors Awaiting Approval (${pending.length})</h4>
-                <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">These people registered themselves as doctors. Approving grants them the <strong>DOCTOR</strong> role so they can sign in. Set GP status separately from the Doctors tab.</p>
+                <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">Approving grants the <strong>DOCTOR</strong> role. GP status is set separately, from the Doctors tab.</p>
                 <table class="data-table" style="margin-top: 0.5rem;">
                     <thead><tr><th>Name</th><th>Registered</th><th>Action</th></tr></thead>
                     <tbody>${rows}</tbody>
@@ -1334,10 +1382,7 @@ async function loadFullReportsDashboard() {
     // compromise between two. Each card carries its letter so the mapping needs no explaining.
     let html = `
         <h3>Reports</h3>
-        <p style="color: #94A3B8; margin-bottom: 1.5rem;">
-            The ten reports required by the assignment, lettered as they are listed there.
-            Select one to run it against the current records.
-        </p>
+        <p style="color: #94A3B8; margin-bottom: 1.5rem;">Select a report to run it against the current records.</p>
 
         ${pendingHtml}
 
@@ -1350,7 +1395,7 @@ async function loadFullReportsDashboard() {
             <div class="report-card" data-group="diagnoses" onclick="fetchReport('/reports/diagnoses/common', 'Times Diagnosed per Condition', ['Diagnosis', 'Times Diagnosed'], r => [r.diagnosisName, r.count])">
                 <span class="report-group">b · Diagnoses</span>
                 <h4>Times Diagnosed per Condition</h4>
-                <p>Which conditions are diagnosed most often, ranked.</p>
+                <p>How many times each condition has been diagnosed.</p>
             </div>
             <div class="report-card" data-group="doctors" onclick="renderReportFilterPanel('gp_patients')">
                 <span class="report-group">c · Doctors</span>
@@ -1385,23 +1430,17 @@ async function loadFullReportsDashboard() {
             <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/months', 'Sick Leaves Issued per Month', ['Month', 'Sick Leaves Issued'], r => [fmtMonth(r.year, r.month), r.count])">
                 <span class="report-group">i · Sick leaves</span>
                 <h4>Sick Leaves Issued per Month</h4>
-                <p>Ranked, so the busiest month of the year is the top row.</p>
+                <p>How many sick leaves were issued in each month.</p>
             </div>
             <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/doctors', 'Sick Leaves Issued per Doctor', ['Doctor ID', 'Doctor Name', 'Sick Leaves Issued'], r => [r.doctorId, 'Dr. '+r.doctorName, r.sickLeaveCount])">
                 <span class="report-group">j · Sick leaves</span>
                 <h4>Sick Leaves Issued per Doctor</h4>
-                <p>Ranked, so the doctor issuing the most is the top row.</p>
+                <p>How many sick leaves each doctor has issued.</p>
             </div>
-        </div>
-
-        <p style="color: #64748B; font-size: 0.85rem; margin: 1.75rem 0 0.75rem;">
-            Beyond the ten — the health-insurance check the assignment requires of patient records.
-        </p>
-        <div class="reports-grid">
-            <div class="report-card" data-group="insurance" onclick="fetchReport('/reports/patients/insurance', 'Insurance Months Covered per Patient', ['Patient ID', 'Patient', 'EGN', 'Months Covered', 'Status'], r => [r.patientId, r.patientName, r.egn, r.coveredMonths + ' of ' + r.requiredMonths, r.insured ? 'Insured' : 'Not insured'])">
+            <div class="report-card" data-group="insurance" onclick="fetchReport('/reports/patients/insurance', 'Unpaid Months per Patient', ['Patient ID', 'Patient', 'EGN', 'Unpaid Months', 'Status'], r => [r.patientId, r.patientName, r.egn, r.unpaidMonths.map(m => fmtMonth(m.year, m.month)).join(', '), r.insured ? 'Insured' : 'Not insured'], false, r => r.unpaidMonths.length > 0)">
                 <span class="report-group">Insurance</span>
-                <h4>Insurance Months Covered per Patient</h4>
-                <p>Months paid out of the six the rule checks, for every patient.</p>
+                <h4>Unpaid Months per Patient</h4>
+                <p>Which of the last six months each patient still owes. Anyone fully paid is left out.</p>
             </div>
         </div>
 
@@ -1431,12 +1470,12 @@ async function renderReportFilterPanel(type) {
         } catch (e) { diagOptions = '<option value="">Error loading diagnoses</option>'; }
 
         filterPanel.innerHTML = `
-            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.25rem; border-radius: 12px; margin-top: 1rem;">
-                <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Patients by Diagnosis</h4>
-                <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 220px;">
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineDiagSelect">Select Diagnosis:</label>
-                        <select id="inlineDiagSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+            <div class="filter-panel">
+                <h4>Filter Report: Patients by Diagnosis</h4>
+                <div class="filter-row">
+                    <div class="filter-field">
+                        <label for="inlineDiagSelect">Select Diagnosis:</label>
+                        <select id="inlineDiagSelect" class="filter-input">
                             ${diagOptions}
                         </select>
                     </div>
@@ -1446,16 +1485,16 @@ async function renderReportFilterPanel(type) {
         `;
     } else if (type === 'dates') {
         filterPanel.innerHTML = `
-            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.25rem; border-radius: 12px; margin-top: 1rem;">
-                <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Visits in Date Range</h4>
-                <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+            <div class="filter-panel">
+                <h4>Filter Report: Visits in Date Range</h4>
+                <div class="filter-row">
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineStartDate">Start Date:</label>
-                        <input type="date" id="inlineStartDate" value="2026-01-01" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+                        <label for="inlineStartDate">Start Date:</label>
+                        <input type="date" id="inlineStartDate" value="2026-01-01" class="filter-input">
                     </div>
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineEndDate">End Date:</label>
-                        <input type="date" id="inlineEndDate" value="${todayStr}" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+                        <label for="inlineEndDate">End Date:</label>
+                        <input type="date" id="inlineEndDate" value="${todayStr}" class="filter-input">
                     </div>
                     <button class="btn btn-primary" onclick="runDatesReport()">Generate Report</button>
                 </div>
@@ -1464,22 +1503,22 @@ async function renderReportFilterPanel(type) {
     } else if (type === 'doctor_dates') {
         await fetchDoctorsList();
         filterPanel.innerHTML = `
-            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.25rem; border-radius: 12px; margin-top: 1rem;">
-                <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Visits by Doctor in Date Range</h4>
-                <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 200px;">
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineDocSelect">Select Doctor:</label>
-                        <select id="inlineDocSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+            <div class="filter-panel">
+                <h4>Filter Report: Visits by Doctor in Date Range</h4>
+                <div class="filter-row">
+                    <div class="filter-field">
+                        <label for="inlineDocSelect">Select Doctor:</label>
+                        <select id="inlineDocSelect" class="filter-input">
                             ${doctorsList.map(d => `<option value="${d.id}">Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`).join('')}
                         </select>
                     </div>
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineStartDate">Start Date:</label>
-                        <input type="date" id="inlineStartDate" value="2026-01-01" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+                        <label for="inlineStartDate">Start Date:</label>
+                        <input type="date" id="inlineStartDate" value="2026-01-01" class="filter-input">
                     </div>
                     <div>
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineEndDate">End Date:</label>
-                        <input type="date" id="inlineEndDate" value="${todayStr}" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+                        <label for="inlineEndDate">End Date:</label>
+                        <input type="date" id="inlineEndDate" value="${todayStr}" class="filter-input">
                     </div>
                     <button class="btn btn-primary" onclick="runDoctorDatesReport()">Generate Report</button>
                 </div>
@@ -1488,12 +1527,12 @@ async function renderReportFilterPanel(type) {
     } else if (type === 'patient_visits') {
         await fetchPatientsList();
         filterPanel.innerHTML = `
-            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.25rem; border-radius: 12px; margin-top: 1rem;">
-                <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Visits for Patient</h4>
-                <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 240px;">
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlinePatSelect">Select Patient:</label>
-                        <select id="inlinePatSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+            <div class="filter-panel">
+                <h4>Filter Report: Visits for Patient</h4>
+                <div class="filter-row">
+                    <div class="filter-field">
+                        <label for="inlinePatSelect">Select Patient:</label>
+                        <select id="inlinePatSelect" class="filter-input">
                             ${patientsList.map(p => `<option value="${p.id}">${esc(p.firstName)} ${esc(p.lastName)} (EGN: ${esc(p.egn)})</option>`).join('')}
                         </select>
                     </div>
@@ -1507,12 +1546,12 @@ async function renderReportFilterPanel(type) {
         // that can only ever come back empty.
         const gps = doctorsList.filter(d => d.isGP);
         filterPanel.innerHTML = `
-            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.25rem; border-radius: 12px; margin-top: 1rem;">
-                <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Patients Registered with a GP</h4>
-                <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 240px;">
-                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineGpSelect">Select General Practitioner:</label>
-                        <select id="inlineGpSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+            <div class="filter-panel">
+                <h4>Filter Report: Patients Registered with a GP</h4>
+                <div class="filter-row">
+                    <div class="filter-field">
+                        <label for="inlineGpSelect">Select General Practitioner:</label>
+                        <select id="inlineGpSelect" class="filter-input">
                             ${gps.length === 0
                                 ? '<option value="">No general practitioners registered</option>'
                                 : gps.map(d => `<option value="${d.id}">Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`).join('')}
@@ -1578,8 +1617,8 @@ function runPatientVisitsReport() {
         v.id,
         fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime),
         'Dr. ' + v.doctorName,
-        (v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d=>d.name).join(', ') : '—'),
-        (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—'),
+        (v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d=>d.name).join(', ') : '—'),
+        (v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—'),
         (v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—')
     ], true);
 }
@@ -1594,7 +1633,7 @@ function runPatientVisitsReport() {
  */
 async function apiErrorMessage(response, fallback) {
     const body = await response.json().catch(() => null);
-    if (body && body.details && Object.keys(body.details).length > 0) {
+    if (body && body.details && Object.keys(body.details).length> 0) {
         return Object.values(body.details).join('\n');
     }
     if (body && body.message) return body.message;
@@ -1645,29 +1684,32 @@ function exportCurrentReport() {
     URL.revokeObjectURL(url);
 }
 
-async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel = false) {
+async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel = false, rowFilter = null) {
     const filterPanel = document.getElementById('report-filter-panel');
     if (!keepFilterPanel && filterPanel) {
         filterPanel.innerHTML = '';
     }
 
     const resultsArea = document.getElementById('report-results');
-    resultsArea.innerHTML = '<p style="color: #94A3B8;">Generating report...</p>';
+    resultsArea.innerHTML = '<p class="muted-label">Generating report...</p>';
 
     try {
         const response = await fetchWithAuth(`${API_BASE}${endpoint}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
 
-        const rows = data.map(rowMapper);
+        // A report may present a subset of an endpoint — "who owes something" is the insurance
+        // status list minus everyone who owes nothing, not a second query.
+        const source = rowFilter ? data.filter(rowFilter) : data;
+        const rows = source.map(rowMapper);
         // Remember what is on screen so the export button below writes exactly that.
         lastReport = { title, headers, rows };
 
         // Escape centrally: every report title and cell here is server data (patient and doctor
         // names, diagnosis text, prescription notes), and no row mapper produces markup.
-        let html = `<h4 style="color: #F8FAFC; margin-bottom: 1rem;">${esc(title)}</h4>`;
+        let html = `<h4>${esc(title)}</h4>`;
         if (rows.length === 0) {
-            html += '<p style="color: #94A3B8;">No records found for this report.</p>';
+            html += '<p class="muted-label">No records found for this report.</p>';
         } else {
             html += `<div style="display:flex; justify-content:flex-end; margin-bottom:0.5rem;">
                         <button class="btn btn-secondary" style="padding:0.3rem 0.9rem; font-size:0.8rem;"
@@ -1686,7 +1728,7 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
         }
         resultsArea.innerHTML = html;
     } catch (err) {
-        resultsArea.innerHTML = `<p style="color: #EF4444;">Error generating report: ${esc(err.message)}</p>`;
+        resultsArea.innerHTML = `<p class="error-text">Error generating report: ${esc(err.message)}</p>`;
     }
 }
 
@@ -1750,10 +1792,9 @@ async function loadAuditLogs(page = 0) {
         const logs = pageData.content || [];
 
         let html = '<h3>System Audit Logs</h3>';
-        html += '<p style="color: #94A3B8; margin-bottom: 1rem;">Track all entity creation, modification, and deletion events across the system.</p>';
 
         if (logs.length === 0) {
-            html += '<p style="color: #94A3B8;">No audit logs found.</p>';
+            html += '<p class="muted-label">No audit logs found.</p>';
         } else {
             html += '<table class="data-table"><thead><tr>';
             html += '<th onclick="sortTable(0, this)">Timestamp</th><th onclick="sortTable(1, this)">Action</th><th onclick="sortTable(2, this)">Entity</th><th onclick="sortTable(3, this)">Record</th><th onclick="sortTable(4, this)">Actor</th>';
@@ -1762,15 +1803,15 @@ async function loadAuditLogs(page = 0) {
                 const dateStr = l.createdAt ? fmtDateTime(l.createdAt) : '—';
                 // Older entries predate entity_label, so fall back to the id alone.
                 const record = l.entityLabel
-                    ? `${esc(l.entityLabel)} <span style="color:#64748B;">#${esc(String(l.entityId))}</span>`
-                    : `<span style="color:#64748B;">#${esc(String(l.entityId))}</span>`;
+                    ? `${esc(l.entityLabel)} <span class="muted">#${esc(String(l.entityId))}</span>`
+                    : `<span class="muted">#${esc(String(l.entityId))}</span>`;
                 html += `<tr><td>${esc(dateStr)}</td><td><span class="role-badge">${esc(l.action)}</span></td><td>${esc(l.entityType)}</td><td>${record}</td><td>${esc(l.actor)}</td></tr>`;
             });
             html += '</tbody></table>';
         }
         contentArea.innerHTML = html;
     } catch (e) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading audit logs: ${esc(e.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading audit logs: ${esc(e.message)}</p>`;
     }
 }
 
@@ -1897,7 +1938,7 @@ async function viewGpPatients(doctorId) {
         }
         contentArea.innerHTML = html;
     } catch (err) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patients: ${esc(err.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading patients: ${esc(err.message)}</p>`;
     }
 }
 
@@ -1920,8 +1961,8 @@ async function viewPatientVisitsDirect(patientId) {
         } else {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
-                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
-                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
+                const diagNames = v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
+                const rxNotes = v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
                 const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });
@@ -1929,6 +1970,6 @@ async function viewPatientVisitsDirect(patientId) {
         }
         contentArea.innerHTML = html;
     } catch (err) {
-        contentArea.innerHTML = `<p style="color: #EF4444;">Error loading patient visits: ${esc(err.message)}</p>`;
+        contentArea.innerHTML = `<p class="error-text">Error loading patient visits: ${esc(err.message)}</p>`;
     }
 }

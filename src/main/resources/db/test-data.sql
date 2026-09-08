@@ -91,9 +91,14 @@ INSERT INTO patient (id, keycloak_id, egn, first_name, last_name, gp_doctor_id) 
 (23, NULL, '9910111239', 'Nadezhda', 'Bozhilova', 6),
 (24, NULL, '8609275540', 'Lyubomir', 'Ganchev', NULL);
 
--- 5. Paid insurance. The check counts distinct months inside the six ending with the current
---    one, so full cover is five months back through today. Patients 5 and 6 sit exactly one
---    month short -- the boundary the rule turns on, and the most useful case to demonstrate.
+-- 5. Paid insurance. Coverage is an UNBROKEN run of paid months, anchored at the current month
+--    when it has been paid and at the previous one when it has not -- the current month is not
+--    over yet, so an unpaid one is not a lapse, the same way this month's bill is not overdue.
+--
+--    The rows below cover every case worth showing: runs of 6 (insured), 5 (one short, the
+--    boundary), 3 and 1; patients 12 and 19 who stopped two months ago and so score 0 despite
+--    three paid months, which a plain tally could not tell apart; and patients 20 and 21 who
+--    have not paid this month yet but are unbroken through last month, so remain insured.
 INSERT INTO paid_insurance (patient_id, insurance_date, paid_on) VALUES
 (1, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
 (1, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
@@ -125,16 +130,16 @@ INSERT INTO paid_insurance (patient_id, insurance_date, paid_on) VALUES
 (16, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
 (16, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
 (16, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
-(5, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
 (5, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
 (5, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
 (5, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
 (5, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
-(6, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
+(5, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
 (6, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
 (6, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
 (6, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
 (6, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
+(6, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
 (4, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
 (4, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
 (4, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
@@ -144,10 +149,28 @@ INSERT INTO paid_insurance (patient_id, insurance_date, paid_on) VALUES
 (17, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
 (17, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
 (17, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
-(7, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
-(8, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
-(11, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
-(18, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH);
+(7, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
+(8, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
+(11, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
+(18, DATE_FORMAT(CURDATE(), '%Y-%m-01'), CURDATE()),
+(12, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
+(12, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
+(12, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
+(19, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
+(19, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
+(19, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
+(20, DATE_FORMAT(CURDATE() - INTERVAL 6 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 6 MONTH),
+(20, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
+(20, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
+(20, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
+(20, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
+(20, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH),
+(21, DATE_FORMAT(CURDATE() - INTERVAL 6 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 6 MONTH),
+(21, DATE_FORMAT(CURDATE() - INTERVAL 5 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 5 MONTH),
+(21, DATE_FORMAT(CURDATE() - INTERVAL 4 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 4 MONTH),
+(21, DATE_FORMAT(CURDATE() - INTERVAL 3 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 3 MONTH),
+(21, DATE_FORMAT(CURDATE() - INTERVAL 2 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 2 MONTH),
+(21, DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH, '%Y-%m-01'), CURDATE() - INTERVAL 1 MONTH);
 
 -- 6. Visits across roughly eight months, so the period reports and the monthly sick-leave
 --    ranking both have range to work with.

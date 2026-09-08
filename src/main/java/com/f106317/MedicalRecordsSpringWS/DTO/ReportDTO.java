@@ -1,5 +1,7 @@
 package com.f106317.MedicalRecordsSpringWS.DTO;
 
+import java.util.List;
+
 /**
  * Report DTOs for typed, readable API responses instead of Object[].
  */
@@ -23,5 +25,12 @@ public class ReportDTO {
      * a refusal.
      */
     public record PatientInsuranceStatus(Long patientId, String patientName, String egn,
-                                         long coveredMonths, int requiredMonths, boolean insured) {}
+                                         boolean insured, List<UnpaidMonth> unpaidMonths) {}
+
+    /**
+     * A calendar month inside the checked window with no contribution recorded against it.
+     * WHY the months and not just a count: "you are three months short" does not tell a patient
+     * what to pay. The months do.
+     */
+    public record UnpaidMonth(int year, int month) {}
 }

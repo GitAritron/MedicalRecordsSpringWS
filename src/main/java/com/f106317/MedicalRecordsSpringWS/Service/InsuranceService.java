@@ -14,9 +14,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -30,11 +34,8 @@ public class InsuranceService {
     static final int REQUIRED_MONTHS = 6;
 
     /**
-     * Checks if a patient has continuous insurance coverage over the last 6 months.
-     * WHAT: Requires a payment in every one of the 6 calendar months ending with the current one.
-     * WHY: The window includes the current month, so it starts 5 months back, not 6 — going back a
-     * full 6 months would span 7 distinct months and let a patient miss one and still pass. The
-     * window also ends today, so payments dated in the future cannot be used to satisfy the check.
+     * Whether the patient's contributions run unbroken across the last six months.
+     * The verdict alone; {@link #getStatus} carries the run and the months still owed.
      */
     @Transactional(readOnly = true)
     public boolean hasContinuousInsurance(Long patientId) {
@@ -49,8 +50,65 @@ public class InsuranceService {
     @Transactional(readOnly = true)
     public InsuranceStatusResponse getStatus(Long patientId) {
         LocalDate today = LocalDate.now();
-        long covered = insuranceRepository.countCoveredMonths(patientId, windowStart(today), today);
-        return new InsuranceStatusResponse(covered >= REQUIRED_MONTHS, covered, REQUIRED_MONTHS);
+        Set<Integer> months = new HashSet<>(
+                insuranceRepository.findCoveredMonthKeys(patientId, windowStart(today), today));
+        boolean insured = consecutiveMonths(months, today) >= REQUIRED_MONTHS;
+        return new InsuranceStatusResponse(insured, unpaidMonths(months, today));
+    }
+
+    /**
+     * The unbroken run of paid months, ending with the current month or the one before it.
+     * <p>
+     * WHY consecutive rather than a plain count: the two agree on the verdict, but they disagree
+     * about everyone else, and that is the number a person reads. A patient who paid five months and
+     * then stopped is not insured; one who missed only the oldest month very nearly is. A count of
+     * five describes both. The run separates them.
+     * <p>
+     * WHY the run may end last month: the current month is not yet over. Treating it as a missed
+     * payment on the 1st would report everyone as lapsed for as long as it takes them to pay, which
+     * is not what the contributions are — like any monthly bill, the month is owed by the time it
+     * ends, not the moment it starts. So the run is anchored at the current month when it has been
+     * paid, and at the previous month when it has not; a patient covered unbroken through last month
+     * counts as insured, and paying this month simply keeps the run going.
+     * <p>
+     * Capped at {@code REQUIRED_MONTHS}: the rule asks about the last six months, not a lifetime.
+     */
+    private long consecutiveMonths(Set<Integer> coveredMonthKeys, LocalDate today) {
+        YearMonth current = YearMonth.from(today);
+        YearMonth anchor = coveredMonthKeys.contains(key(current)) ? current : current.minusMonths(1);
+
+        long run = 0;
+        YearMonth month = anchor;
+        while (run < REQUIRED_MONTHS && coveredMonthKeys.contains(key(month))) {
+            run++;
+            month = month.minusMonths(1);
+        }
+        return run;
+    }
+
+    /**
+     * The months in the checked window carrying no contribution, oldest first.
+     * <p>
+     * WHY the window here ends with the *current* month rather than the run's anchor: this list
+     * answers "what do I still owe", and the current month is owed even while the grace period
+     * keeps the patient insured. A patient covered unbroken through last month therefore reads as
+     * insured and still sees this month listed — which is exactly the position they are in.
+     */
+    private List<ReportDTO.UnpaidMonth> unpaidMonths(Set<Integer> coveredMonthKeys, LocalDate today) {
+        List<ReportDTO.UnpaidMonth> unpaid = new ArrayList<>();
+        YearMonth month = YearMonth.from(today).minusMonths(REQUIRED_MONTHS - 1L);
+        for (int i = 0; i < REQUIRED_MONTHS; i++) {
+            if (!coveredMonthKeys.contains(key(month))) {
+                unpaid.add(new ReportDTO.UnpaidMonth(month.getYear(), month.getMonthValue()));
+            }
+            month = month.plusMonths(1);
+        }
+        return unpaid;
+    }
+
+    /** Sortable month identity, matching what the repository projects. */
+    private static int key(YearMonth month) {
+        return month.getYear() * 100 + month.getMonthValue();
     }
 
     /**
@@ -61,32 +119,37 @@ public class InsuranceService {
     @Transactional(readOnly = true)
     public List<ReportDTO.PatientInsuranceStatus> getStatusForAllPatients() {
         LocalDate today = LocalDate.now();
-        Map<Long, Long> coveredByPatient = insuranceRepository
-                .countCoveredMonthsForAllPatients(windowStart(today), today).stream()
-                .collect(Collectors.toMap(row -> (Long) row[0], row -> (Long) row[1]));
+        Map<Long, Set<Integer>> monthsByPatient = new HashMap<>();
+        for (Object[] row : insuranceRepository.findCoveredMonthKeysForAllPatients(windowStart(today), today)) {
+            monthsByPatient
+                    .computeIfAbsent((Long) row[0], id -> new HashSet<>())
+                    .add(((Number) row[1]).intValue());
+        }
 
         return patientRepository.findAll().stream()
                 .map(patient -> {
-                    long covered = coveredByPatient.getOrDefault(patient.getId(), 0L);
+                    Set<Integer> months = monthsByPatient.getOrDefault(patient.getId(), Set.of());
                     return new ReportDTO.PatientInsuranceStatus(
                             patient.getId(),
                             patient.getFirstName() + " " + patient.getLastName(),
                             patient.getEgn(),
-                            covered,
-                            REQUIRED_MONTHS,
-                            covered >= REQUIRED_MONTHS);
+                            consecutiveMonths(months, today) >= REQUIRED_MONTHS,
+                            unpaidMonths(months, today));
                 })
                 .toList();
     }
 
     /**
-     * The first day of the oldest month still inside the window.
-     * The window includes the current month, so it starts {@code REQUIRED_MONTHS - 1} months back,
-     * not a full six — going back six would span seven distinct months and let a patient miss one
-     * and still pass.
+     * The first day of the oldest month the run could possibly reach.
+     * <p>
+     * Six months back rather than five, because a run anchored at *last* month can extend six months
+     * from there. That fetches seven distinct months, which used to be the bug — the original code
+     * counted payments inside a seven-month window while requiring only six, so a patient could skip
+     * a month and still pass. It is safe now because nothing is counted: the run must be unbroken
+     * from its anchor, so a gap ends it wherever the window happens to reach.
      */
     private LocalDate windowStart(LocalDate today) {
-        return today.minusMonths(REQUIRED_MONTHS - 1L).withDayOfMonth(1);
+        return today.minusMonths(REQUIRED_MONTHS).withDayOfMonth(1);
     }
 
     /**

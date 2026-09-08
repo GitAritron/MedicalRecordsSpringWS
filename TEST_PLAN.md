@@ -116,9 +116,19 @@ docker exec -it medical_records_db mysql -uroot -proot medical_records_db -e "SE
 
 **Pass:** 8 doctors (4 of them GPs), 24 patients, 46 visits, 46 diagnoses, 20 sick leaves.
 
-Insurance months per patient: **1, 2, 3, 9 and 16 show 6** (fully covered); **5 and 6 show 5** — one
-month short, the boundary the rule turns on; 4, 10 and 17 show 3; 7, 8, 11 and 18 show 1; the rest
-are absent, meaning zero.
+Insurance is an **unbroken run** of paid months, anchored at the current month when it has been paid
+and at the previous one when it has not — the current month is not over, so an unpaid one is not yet
+a lapse. Seeded runs:
+
+| Run | Patients | Meaning |
+|---|---|---|
+| 6 | 1, 2, 3, 9, 16 | Insured, paid up to and including this month |
+| 6 | **20, 21** | Insured **on the grace period** — this month unpaid, unbroken through last month |
+| 5 | 5, 6 | One month short — the boundary the rule turns on |
+| 3 | 4, 10, 17 | |
+| 1 | 7, 8, 11, 18 | Paid this month only |
+| 0 | **12, 19** | Three paid months, but they stopped two months ago — no anchor. A plain tally would call these "3" and could not tell them from the row above |
+| 0 | the rest | Never paid |
 
 > Doctors 6–8 and patients 16–24 have a NULL `keycloak_id` on purpose — records-only entries, people
 > the practice tracks who hold no portal account. The realm only ships 5 doctor and 15 patient logins.
@@ -143,10 +153,9 @@ docker exec medical_records_db mysql -uroot -proot -N -e "SELECT COUNT(*) FROM i
 
 Open `http://localhost:8080`.
 
-**Signed out**, the header carries the wordmark and nothing else — no Login or Register buttons.
-The landing page itself offers **Sign in** and **Create an account**, plus three role cards. The
-duplicate pair that used to sit in the header appeared under exactly the same condition, so it was
-removed.
+**Signed out**, the page is the wordmark, a title and two buttons — **Sign in** and **Create an
+account** — and nothing else. The Login/Register pair that used to sit in the header appeared under
+exactly the same condition as these, so it was a duplicate and was removed.
 
 ### 3.1 Sign-in and role routing
 
@@ -179,7 +188,11 @@ redirect to `/auth` in the Network tab — the query string carries `code_challe
 | 3.2a | ADMIN | Reports | Report cards render, no error banner; the pending-approvals banner appears only when a doctor is awaiting approval |
 | 3.2b | ADMIN | Visits | 46 visits listed with patient, doctor, diagnosis |
 | 3.2c | DOCTOR | My Patients | Dr. Georgi Ivanov's roster — **9 patients** (ids 1–9), the largest of the four |
-| 3.2d | PATIENT | My Medical History | Ivan Dimitrov's visits, each with diagnosis, prescription and any sick leave, plus a green insurance badge reading **6 of 6 months paid** |
+| 3.2d | PATIENT | My Medical History | Ivan Dimitrov's visits, each with diagnosis, prescription and any sick leave, plus a green **Health Insurance Active** badge with no months outstanding |
+| 3.2e | ADMIN | Patients | An **Insurance** column on every row — verdict plus the run, e.g. *Insured 6/6*, *Not insured 3/6* |
+| 3.2f | DOCTOR | My Patients | The same Insurance column, plus **Visits** and **+ Insurance** actions. Previously this screen showed name and EGN and nothing else |
+| 3.2g | ADMIN | Visits | A **Sick Leave** column. The other two visit views always had it; this one did not |
+| 3.2h | ADMIN | Audit Logs | The **Actor** column shows usernames (`admin`, `doctor`), not Keycloak UUIDs |
 
 **Fail symptom to watch for:** an HTTP 500 on the Visits or My Medical History screens. Those two load the full visit graph (patient, doctor, diagnoses, prescriptions, sick leave) in one query, which is the most fragile read in the system.
 
@@ -257,13 +270,18 @@ order also groups cleanly by subject, which is why the colour coding survives it
 | 4.3i | **i** · Sick Leaves Issued per Month | Reports → card i | 6 distinct months, ranked; the busiest is the top row |
 | 4.3j | **j** · Sick Leaves Issued per Doctor | Reports → card j | Ranked, headed by Dr. Georgi Ivanov with 9 |
 
-**Beyond the ten (4.3l):** the **Insurance Months Covered per Patient** card — the *справка* §1 requires of patient
+**Beyond the ten (4.3l):** the **Unpaid Months per Patient** card — the *справка* §1 requires of patient
 records. Previously this existed only as a true/false badge on the patient's own dashboard, invisible
 to the staff who need it.
 
-**Pass:** every patient listed with months covered out of 6 and a verdict. Five patients read
-*6 of 6 — Insured*; patients 5 and 6 read *5 of 6 — Not insured*, which is the boundary case worth
-demonstrating; ten patients read *0 of 6*.
+**Pass:** only patients owing something appear — the fully paid are left out. Spot checks against
+the seed: Elena Nikolova (5) shows one month, the oldest in the window; Desislava Petkova (12) shows
+three; Teodora Simeonova (15) shows all six. **Martin Zlatev (20) appears showing only the current
+month while his status still reads Insured** — the grace period, stated plainly: covered, with this
+month outstanding.
+
+No month count appears anywhere in the interface. The run understates anyone who paid on either side
+of a gap, so the verdict answers the question and the months say what is outstanding.
 
 > Counts above come from the seed and hold on a fresh `down -v`. They shift as soon as you create
 > visits during Phase 4.1, which is expected — the rankings are what matter, not the absolute numbers.
@@ -484,20 +502,24 @@ With a token for `doctor` (Dr. Georgi Ivanov, doctor id 1):
 
 ### 6.2 Insurance coverage — the six-month rule
 
-| # | Patient | Seeded coverage | Expect |
+Coverage is an unbroken run of paid months, anchored at the current month when it has been paid and
+at the previous one when it has not.
+
+| # | Patient | Seeded run | Expect |
 |---|---|---|---|
-| 6.2a | Ivan Dimitrov (id 1) | 6 of 6 | **Insured** |
-| 6.2b | Elena Nikolova (id 5) | **5 of 6** | **Not insured** — the boundary |
-| 6.2c | Maria Vasileva (id 4) | 3 of 6 | **Not insured** |
-| 6.2d | Nikolay Popov (id 7) | 1 of 6 | **Not insured** |
-| 6.2e | Teodora Simeonova (id 15) | none | **Not insured**, reported as *0 of 6* rather than omitted |
+| 6.2a | Ivan Dimitrov (id 1) | every month paid, including this one | **Insured**, nothing outstanding |
+| 6.2b | Martin Zlatev (id 20) | unbroken through last month, **this month unpaid** | **Insured** — the grace period. The badge still lists this month as outstanding |
+| 6.2c | Elena Nikolova (id 5) | one month short, the oldest | **Not insured** — the boundary. One month listed |
+| 6.2d | Maria Vasileva (id 4) | three months paid, most recent | **Not insured**, three listed |
+| 6.2e | Desislava Petkova (id 12) | three months paid, but she **stopped two months ago** | **Not insured**, three listed — the three most recent, where 6.2d owes the three oldest |
+| 6.2f | Teodora Simeonova (id 15) | none | **Not insured**, all six listed rather than omitted |
 
-**6.2f — crossing the boundary.** Patient 5 is seeded one month short on purpose. As admin, use
+**6.2g — crossing the boundary.** Patient 5 is seeded one month short on purpose. As admin, use
 **+ Insurance** to record the one missing month (the 1st of whichever month has no row).
-**Pass:** the patient flips to **Insured**, and the Insurance Months Covered per Patient report moves them from
-*5 of 6* to *6 of 6*. Removing it again would flip them back.
+**Pass:** the patient flips to **Insured**, and the Unpaid Months per Patient report drops them
+altogether — they now owe nothing. Removing the payment again brings them back.
 
-**6.2g — future dating.** Try to record a payment dated next month.
+**6.2h — future dating.** Try to record a payment dated next month.
 **Pass:** rejected — *"Insurance date cannot be in the future"*.
 
 ### 6.3 Input validation
@@ -581,7 +603,7 @@ The sign-in, registration and update-password screens use the `medical-records` 
 | `patient` | `patient` | PATIENT | Ivan Dimitrov (id 1, GP 1, **insured**) |
 | `patient2` | `patient` | PATIENT | Petar Ivanov (id 2, GP 1, **insured**) |
 | `patient3` | `patient` | PATIENT | Georgi Stoyanov (id 3, GP 1, **insured**) |
-| `patient4`–`patient15` | `patient` | PATIENT | Patients 4–15. `patient5` is the one seeded at **5 of 6** months |
+| `patient4`–`patient15` | `patient` | PATIENT | Patients 4–15. `patient5` is the one seeded one month short — the boundary |
 
 ## Appendix B — Seeded clinical data
 
@@ -606,7 +628,7 @@ period reports and un-insured every patient once the calendar rolled past it.
 | e · visits per doctor | 11 · 8 · 7 · 6 · 5 · 4 · 3 · 2 — no ties, all 8 doctors present |
 | i · sick leaves per month | 6 distinct months with a clear busiest one |
 | j · sick leaves per doctor | Georgi Ivanov 9 · Maria Stoyanova 6 · Dimitar Petrov 3 · Elena Koleva 2 |
-| Insurance | 5 patients at 6/6 · **2 at 5/6** · 3 at 3/6 · 4 at 1/6 · 10 at 0/6 |
+| Insurance | 7 insured — **2 of them on the grace period** · **2 one month short** (boundary) · 3 owing three months · 4 owing five · **2 who stopped two months ago** · 6 never paid |
 
 > Doctors 6–8 and patients 16–24 carry a NULL `keycloak_id`: records-only entries, which is a
 > supported state and worth having visible. The realm ships 5 doctor and 15 patient logins.
