@@ -781,7 +781,7 @@ async function submitDoctorForm(e) {
  */
 function syncAccountFields(prefix) {
     const usernameInput = document.getElementById(prefix + 'Username');
-    const linked = document.getElementById(prefix + 'KeycloakId').value.trim().length> 0;
+    const linked = document.getElementById(prefix + 'KeycloakId').value.trim().length > 0;
 
     usernameInput.disabled = linked;
     if (linked) usernameInput.value = '';
@@ -860,7 +860,7 @@ async function loadDoctorsDirectory() {
         html += `</tr></thead><tbody>`;
 
         doctorsList.forEach(doc => {
-            const specs = doc.specializations && doc.specializations.length> 0
+            const specs = doc.specializations && doc.specializations.length > 0
                 ? doc.specializations.map(s => esc(s.name || s)).join(', ')
                 : '—';
             html += `<tr><td>${doc.id}</td><td>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)}</td><td>${doc.isGP ? 'Yes' : 'No'}</td><td>${specs}</td>`;
@@ -1041,7 +1041,7 @@ function showClinicalDataSection(visit) {
 function renderExistingClinicalData(visit) {
     // Diagnoses
     const diagList = document.getElementById('diagnosisList');
-    if (visit.diagnoses && visit.diagnoses.length> 0) {
+    if (visit.diagnoses && visit.diagnoses.length > 0) {
         diagList.innerHTML = visit.diagnoses.map(d =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #1E3A5F; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(d.name)}</span>
@@ -1054,7 +1054,7 @@ function renderExistingClinicalData(visit) {
 
     // Prescriptions
     const prescList = document.getElementById('prescriptionList');
-    if (visit.prescriptions && visit.prescriptions.length> 0) {
+    if (visit.prescriptions && visit.prescriptions.length > 0) {
         prescList.innerHTML = visit.prescriptions.map(p =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(16, 185, 129, 0.1); border: 1px solid #065F46; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(p.note)}</span>
@@ -1193,8 +1193,8 @@ async function loadDoctorVisits() {
         html += `</tr></thead><tbody>`;
 
         visitsList.forEach(v => {
-            const diagNames = v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
-            const rxNotes = v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
+            const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
+            const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
             const slInfo = v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—';
             html += `<tr><td>${esc(fmtDate(v.visitDate))} ${esc(fmtTime(v.visitTime))}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td><td>${esc(rxNotes)}</td><td>${esc(slInfo)}</td>`;
 
@@ -1321,8 +1321,8 @@ async function loadPatientHistory() {
         } else {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
-                const diagNames = v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
-                const rxNotes = v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
+                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
+                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
                 const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });
@@ -1617,8 +1617,8 @@ function runPatientVisitsReport() {
         v.id,
         fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime),
         'Dr. ' + v.doctorName,
-        (v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d=>d.name).join(', ') : '—'),
-        (v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—'),
+        (v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d=>d.name).join(', ') : '—'),
+        (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—'),
         (v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—')
     ], true);
 }
@@ -1633,7 +1633,7 @@ function runPatientVisitsReport() {
  */
 async function apiErrorMessage(response, fallback) {
     const body = await response.json().catch(() => null);
-    if (body && body.details && Object.keys(body.details).length> 0) {
+    if (body && body.details && Object.keys(body.details).length > 0) {
         return Object.values(body.details).join('\n');
     }
     if (body && body.message) return body.message;
@@ -1961,8 +1961,8 @@ async function viewPatientVisitsDirect(patientId) {
         } else {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
-                const diagNames = v.diagnoses && v.diagnoses.length> 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
-                const rxNotes = v.prescriptions && v.prescriptions.length> 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
+                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
+                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
                 const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });

@@ -2,7 +2,6 @@ package com.f106317.MedicalRecordsSpringWS.Service;
 
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Doctor;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Patient;
-import com.f106317.MedicalRecordsSpringWS.Data.Entity.Visit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.AccessDeniedException;
@@ -11,7 +10,6 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
 import java.time.Instant;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 

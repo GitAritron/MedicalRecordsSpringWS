@@ -41,6 +41,15 @@ dependencies {
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// The compiler is the one static analyser already in the build; it just was not being asked.
+// -Xlint:all surfaces unchecked casts, deprecation, fall-through and the rest. Warnings only —
+// nothing here should fail a build days before it is demonstrated.
+tasks.withType<JavaCompile> {
+	// -serial excluded: RuntimeException is Serializable, but nothing here is ever
+	// serialised — exceptions are thrown, caught, and rendered as JSON.
+	options.compilerArgs.addAll(listOf("-Xlint:all", "-Xlint:-processing", "-Xlint:-serial"))
+}
+
 tasks.withType<Test> {
 	useJUnitPlatform()
 	finalizedBy(tasks.jacocoTestReport)

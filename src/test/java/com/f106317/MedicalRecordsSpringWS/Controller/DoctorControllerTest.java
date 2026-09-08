@@ -1,7 +1,6 @@
 package com.f106317.MedicalRecordsSpringWS.Controller;
 
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorResponse;
-import com.f106317.MedicalRecordsSpringWS.DTO.SpecializationResponse;
 import com.f106317.MedicalRecordsSpringWS.Service.DoctorService;
 import com.f106317.MedicalRecordsSpringWS.Service.PatientService;
 import org.junit.jupiter.api.Test;

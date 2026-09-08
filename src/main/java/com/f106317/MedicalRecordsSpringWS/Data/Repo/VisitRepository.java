@@ -21,8 +21,6 @@ public interface VisitRepository extends JpaRepository<Visit, Long> {
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"patient", "doctor", "diagnoses", "prescriptions", "sickLeave"})
     List<Visit> findByPatientId(Long patientId);
 
-    List<Visit> findByDoctorId(Long doctorId);
-
     /** Used to refuse deleting a doctor whose visits would be cascade-removed with them. */
     long countByDoctorId(Long doctorId);
 

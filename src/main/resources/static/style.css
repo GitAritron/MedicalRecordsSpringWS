@@ -123,7 +123,7 @@ h1, h2 {
     flex-wrap: wrap;
 }
 
-.search-input, .date-input {
+.search-input {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
     color: white;
@@ -134,7 +134,7 @@ h1, h2 {
     transition: border-color 0.2s ease;
 }
 
-.search-input:focus, .date-input:focus {
+.search-input:focus {
     border-color: var(--primary);
 }
 
@@ -189,10 +189,6 @@ h1, h2 {
 .btn-large {
     padding: 0.75rem 2.5rem;
     font-size: 1rem;
-}
-
-.mt-4 {
-    margin-top: 1.5rem;
 }
 
 .dashboard-header {
@@ -516,21 +512,6 @@ h4 {
     dialog { width: 95vw; max-width: 95vw; }
     .tab-btn { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
     .btn-add-new { width: 100%; margin-bottom: 0.5rem; }
-}
-
-/* Loading spinner */
-.loading-spinner {
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    border: 2px solid rgba(255,255,255,0.3);
-    border-radius: 50%;
-    border-top-color: #fff;
-    animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
 }
 
 .btn:disabled {

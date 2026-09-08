@@ -1,6 +1,5 @@
 package com.f106317.MedicalRecordsSpringWS.Controller;
 
-import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.Service.InsuranceService;
 import com.f106317.MedicalRecordsSpringWS.Service.PatientService;
