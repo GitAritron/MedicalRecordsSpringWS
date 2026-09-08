@@ -2,6 +2,7 @@ package com.f106317.MedicalRecordsSpringWS.Controller;
 
 import com.f106317.MedicalRecordsSpringWS.DTO.AccountCredentialsResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.InsurancePaymentRequest;
+import com.f106317.MedicalRecordsSpringWS.DTO.InsuranceStatusResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientSelfRegistrationRequest;
@@ -163,9 +164,9 @@ public class PatientController {
      */
     @GetMapping("/{id}/insurance")
     @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR', 'PATIENT')")
-    public ResponseEntity<Boolean> checkInsurance(@PathVariable Long id, Authentication authentication) {
+    public ResponseEntity<InsuranceStatusResponse> checkInsurance(@PathVariable Long id, Authentication authentication) {
         patientService.getPatientById(id, authentication);
-        return ResponseEntity.ok(insuranceService.hasContinuousInsurance(id));
+        return ResponseEntity.ok(insuranceService.getStatus(id));
     }
 
     /**

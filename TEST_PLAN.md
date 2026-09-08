@@ -114,7 +114,14 @@ Connect and spot-check:
 docker exec -it medical_records_db mysql -uroot -proot medical_records_db -e "SELECT COUNT(*) AS doctors FROM doctor; SELECT COUNT(*) AS patients FROM patient; SELECT COUNT(*) AS visits FROM visit; SELECT patient_id, COUNT(DISTINCT CONCAT(YEAR(insurance_date),'-',MONTH(insurance_date))) AS months FROM paid_insurance GROUP BY patient_id ORDER BY patient_id;"
 ```
 
-**Pass:** 5 doctors, 15 patients, 10 visits. Patients **1 and 2 show 6 months**; patients 3–8 show 1; patients 9–15 absent.
+**Pass:** 8 doctors (4 of them GPs), 24 patients, 46 visits, 46 diagnoses, 20 sick leaves.
+
+Insurance months per patient: **1, 2, 3, 9 and 16 show 6** (fully covered); **5 and 6 show 5** — one
+month short, the boundary the rule turns on; 4, 10 and 17 show 3; 7, 8, 11 and 18 show 1; the rest
+are absent, meaning zero.
+
+> Doctors 6–8 and patients 16–24 have a NULL `keycloak_id` on purpose — records-only entries, people
+> the practice tracks who hold no portal account. The realm only ships 5 doctor and 15 patient logins.
 
 Confirm Keycloak got its own schema rather than falling back to H2:
 
@@ -125,7 +132,10 @@ docker exec medical_records_db mysql -uroot -proot -N -e "SELECT COUNT(*) FROM i
 **Pass:** ~90. A `0` means the schema exists but Keycloak never populated it; an error means
 `00-keycloak-db.sql` did not run — reseed with `down -v`.
 
-> The insurance rows are seeded relative to `CURDATE()`, so patients 1 and 2 must show exactly 6 regardless of when you run this. If they show 5, the seed did not apply relative dates — reseed as above.
+> **Every date in the seed is relative to `CURDATE()`** — visits and sick leaves as well as
+> insurance. Patients 1, 2, 3, 9 and 16 must therefore show exactly 6 months whenever you run this,
+> and the visits must span roughly the last 8 months. If the fully covered patients show 5, or the
+> visits cluster in one fixed month, the seed did not apply relative dates — reseed as above.
 
 ---
 
@@ -167,9 +177,9 @@ redirect to `/auth` in the Network tab — the query string carries `code_challe
 | # | Role | Screen | Expect |
 |---|---|---|---|
 | 3.2a | ADMIN | Reports | Report cards render, no error banner; the pending-approvals banner appears only when a doctor is awaiting approval |
-| 3.2b | ADMIN | Visits | 10 visits listed with patient, doctor, diagnosis |
-| 3.2c | DOCTOR | My Patients | Dr. Georgi Ivanov's roster (patients 1, 2, 3, 8, 11, 14) |
-| 3.2d | PATIENT | My Medical History | Ivan Dimitrov's visit of 2026-07-01, diagnosis *Acute Bronchitis* |
+| 3.2b | ADMIN | Visits | 46 visits listed with patient, doctor, diagnosis |
+| 3.2c | DOCTOR | My Patients | Dr. Georgi Ivanov's roster — **9 patients** (ids 1–9), the largest of the four |
+| 3.2d | PATIENT | My Medical History | Ivan Dimitrov's visits, each with diagnosis, prescription and any sick leave, plus a green insurance badge reading **6 of 6 months paid** |
 
 **Fail symptom to watch for:** an HTTP 500 on the Visits or My Medical History screens. Those two load the full visit graph (patient, doctor, diagnoses, prescriptions, sick leave) in one query, which is the most fragile read in the system.
 
@@ -221,8 +231,8 @@ As **admin** unless noted. For each: create, read back, edit, delete.
 
 | # | As | Action | Expect |
 |---|---|---|---|
-| 4.2a | DOCTOR (`doctor`) | Open **All Patients** | Sees all 15 patients, not only their own roster |
-| 4.2b | DOCTOR | Open **All Doctors** | Sees all 5 doctors |
+| 4.2a | DOCTOR (`doctor`) | Open **All Patients** | Sees all 24 patients, not only their own roster of 9 |
+| 4.2b | DOCTOR | Open **All Doctors** | Sees all 8 doctors |
 | 4.2c | DOCTOR (`doctor`) | Visits tab → open a visit **they performed** (visit 1, 2 or 3) and add a diagnosis | Succeeds |
 | 4.2d | DOCTOR (`doctor`) | Try to edit visit **8** (performed by Dr. Dimitar Petrov) | Edit/Delete controls absent; a direct API call returns 403 |
 | 4.2e | PATIENT (`patient`) | My Medical History | Sees only Ivan Dimitrov's own visits |
@@ -230,20 +240,33 @@ As **admin** unless noted. For each: create, read back, edit, delete.
 
 ### 4.3 §3 — All ten reports
 
-The Reports tab is available to both **admin** and **doctor**.
+The Reports tab is available to both **admin** and **doctor**. The cards are laid out in the order
+the assignment lists them and each carries its letter, so the mapping needs no explaining — that
+order also groups cleanly by subject, which is why the colour coding survives it.
 
-| # | Req | Report | Where | Pass |
-|---|---|---|---|---|
-| 4.3a | 3a | Patients with a given diagnosis | Reports → filter by diagnosis → `Influenza Type A` | Lists Petar Ivanov |
-| 4.3b | 3b | Most frequently diagnosed | Reports → *Most Common Diagnoses* | Ranked list of the 10 seeded diagnoses |
-| 4.3c | 3c | **Patients registered with a given GP** | Doctors → **Patients** button on a GP row | Dr. Georgi Ivanov shows 6 patients |
-| 4.3d | 3d | Patient count per GP | Reports → *Patients per GP* | Only GPs listed (1, 3, 5), with counts |
-| 4.3e | 3e | Visit count per doctor | Reports → *Visits per Doctor* | All 5 doctors, counts sum to 10 |
-| 4.3f | 3f | **Visits per patient** | Patients → **Visits** button on a row | That patient's visits with diagnosis and prescription |
-| 4.3g | 3g | Visits in a period | Reports → date filter `2026-07-01`–`2026-07-31` | All 10 seeded visits |
-| 4.3h | 3h | Visits for one doctor in a period | Reports → doctor + date filter, Dr. Georgi Ivanov, July 2026 | 3 visits |
-| 4.3i | 3i | Month with most sick leaves | Reports → *Sick Leaves per Month* | July 2026 with 6 |
-| 4.3j | 3j | Doctors issuing most sick leaves | Reports → *Sick Leaves per Doctor* | Dr. Georgi Ivanov top with 3 |
+| # | Card | Where | Pass |
+|---|---|---|---|
+| 4.3a | **a** · Patients with a Given Diagnosis | Reports → card a → pick `Acute Bronchitis` | 7 visits' worth of patients, each with EGN and GP |
+| 4.3b | **b** · Times Diagnosed per Condition | Reports → card b | Ranked, headed by *Acute Bronchitis* 7, *Hypertension* 6, *Influenza Type A* 5 |
+| 4.3c | **c** · Patients Registered with a Given GP | Reports → card c → pick Dr. Georgi Ivanov | His 9 patients. The picker lists only GPs. Also reachable from the **Patients** button on a GP row in Doctors |
+| 4.3d | **d** · Patients Registered per GP | Reports → card d | Only the 4 GPs, ranked 9 · 6 · 5 · 3 |
+| 4.3e | **e** · Visits Recorded per Doctor | Reports → card e | All 8 doctors, ranked 11 · 8 · 7 · 6 · 5 · 4 · 3 · 2, summing to 46 |
+| 4.3f | **f** · Visits for a Given Patient | Reports → card f → pick a patient | Visit, date, doctor, diagnosis, prescription **and sick leave** — the last column is the one §1 asks for ("излизал ли е в болнични и за колко време") |
+| 4.3g | **g** · Visits in a Given Date Range | Reports → card g → last 12 months | All 46 visits. Narrow to one month and the count drops |
+| 4.3h | **h** · Visits for a Given Doctor in a Date Range | Reports → card h → Dr. Georgi Ivanov, last 12 months | 11 visits, all his |
+| 4.3i | **i** · Sick Leaves Issued per Month | Reports → card i | 6 distinct months, ranked; the busiest is the top row |
+| 4.3j | **j** · Sick Leaves Issued per Doctor | Reports → card j | Ranked, headed by Dr. Georgi Ivanov with 9 |
+
+**Beyond the ten (4.3l):** the **Insurance Months Covered per Patient** card — the *справка* §1 requires of patient
+records. Previously this existed only as a true/false badge on the patient's own dashboard, invisible
+to the staff who need it.
+
+**Pass:** every patient listed with months covered out of 6 and a verdict. Five patients read
+*6 of 6 — Insured*; patients 5 and 6 read *5 of 6 — Not insured*, which is the boundary case worth
+demonstrating; ten patients read *0 of 6*.
+
+> Counts above come from the seed and hold on a fresh `down -v`. They shift as soon as you create
+> visits during Phase 4.1, which is expected — the rankings are what matter, not the absolute numbers.
 
 **Also verify (4.3k):** CSV export. There is one **Export CSV** button above the results table and it
 writes whatever report is currently on screen, filters included — it is built from the rendered rows
@@ -461,16 +484,20 @@ With a token for `doctor` (Dr. Georgi Ivanov, doctor id 1):
 
 ### 6.2 Insurance coverage — the six-month rule
 
-| # | Patient | Expect |
-|---|---|---|
-| 6.2a | Ivan Dimitrov (id 1) — 6 consecutive months | **Insured** |
-| 6.2b | Georgi Stoyanov (id 3) — 1 month only | **Not insured** |
-| 6.2c | Yordan Angelov (id 9) — no payments | **Not insured** |
+| # | Patient | Seeded coverage | Expect |
+|---|---|---|---|
+| 6.2a | Ivan Dimitrov (id 1) | 6 of 6 | **Insured** |
+| 6.2b | Elena Nikolova (id 5) | **5 of 6** | **Not insured** — the boundary |
+| 6.2c | Maria Vasileva (id 4) | 3 of 6 | **Not insured** |
+| 6.2d | Nikolay Popov (id 7) | 1 of 6 | **Not insured** |
+| 6.2e | Teodora Simeonova (id 15) | none | **Not insured**, reported as *0 of 6* rather than omitted |
 
-**6.2d — the boundary.** As admin, record insurance payments for patient 9 for exactly **five** of the last six months (use the +Insurance button, setting the insurance date to the 1st of each month).
-**Pass:** still **not insured**. Add the sixth → **insured**.
+**6.2f — crossing the boundary.** Patient 5 is seeded one month short on purpose. As admin, use
+**+ Insurance** to record the one missing month (the 1st of whichever month has no row).
+**Pass:** the patient flips to **Insured**, and the Insurance Months Covered per Patient report moves them from
+*5 of 6* to *6 of 6*. Removing it again would flip them back.
 
-**6.2e — future dating.** Try to record a payment dated next month.
+**6.2g — future dating.** Try to record a payment dated next month.
 **Pass:** rejected — *"Insurance date cannot be in the future"*.
 
 ### 6.3 Input validation
@@ -553,27 +580,36 @@ The sign-in, registration and update-password screens use the `medical-records` 
 | `doctor5` | `doctor` | DOCTOR | Dr. Maria Stoyanova (id 5, **GP**) |
 | `patient` | `patient` | PATIENT | Ivan Dimitrov (id 1, GP 1, **insured**) |
 | `patient2` | `patient` | PATIENT | Petar Ivanov (id 2, GP 1, **insured**) |
-| `patient3` | `patient` | PATIENT | Georgi Stoyanov (id 3, GP 1, partial) |
-| `patient4`–`patient15` | `patient` | PATIENT | Patients 4–15 |
+| `patient3` | `patient` | PATIENT | Georgi Stoyanov (id 3, GP 1, **insured**) |
+| `patient4`–`patient15` | `patient` | PATIENT | Patients 4–15. `patient5` is the one seeded at **5 of 6** months |
 
 ## Appendix B — Seeded clinical data
 
-| Visit | Patient | Doctor | Date | Diagnosis | Sick leave |
-|---|---|---|---|---|---|
-| 1 | Ivan Dimitrov | Georgi Ivanov | 2026-07-01 | Acute Bronchitis | 3 days |
-| 2 | Petar Ivanov | Georgi Ivanov | 2026-07-02 | Influenza Type A | 5 days |
-| 3 | Georgi Stoyanov | Georgi Ivanov | 2026-07-03 | Migraine | 2 days |
-| 4 | Maria Vasileva | Elena Koleva | 2026-07-05 | Type 2 Diabetes | — |
-| 5 | Elena Nikolova | Elena Koleva | 2026-07-06 | Hypertension | 7 days |
-| 6 | Stefan Hristov | Maria Stoyanova | 2026-07-07 | Pneumonia | 4 days |
-| 7 | Nikolay Popov | Maria Stoyanova | 2026-07-08 | Allergic Rhinitis | — |
-| 8 | Aleksandar Todorov | Dimitar Petrov | 2026-07-09 | Routine Checkup | — |
-| 9 | Yordan Angelov | Stefan Georgiev | 2026-07-10 | Arrhythmia | — |
-| 10 | Borislav Krastev | Maria Stoyanova | 2026-07-11 | Bronchial Asthma | 5 days |
+Shaped so each report returns a ranking rather than a flat list. **All dates are relative to
+`CURDATE()`**, so the data never goes stale — a fixed July 2026 would have quietly emptied the
+period reports and un-insured every patient once the calendar rolled past it.
 
-Sick leaves: 6 total, all July 2026 — Dr. Georgi Ivanov 3, Dr. Elena Koleva 1, Dr. Maria Stoyanova 2.
+| | |
+|---|---|
+| Doctors | 8 — GPs are Georgi Ivanov (1), Elena Koleva (3), Maria Stoyanova (5), Nikolay Dimitrov (6) |
+| Patients | 24, one of whom (id 24) has no GP yet |
+| Visits | 46, spread over roughly the last 8 months |
+| Diagnoses / prescriptions | 46 each |
+| Sick leaves | 20, across 6 distinct months |
 
-> Visit dates are fixed at July 2026; only the insurance rows are relative to the current date. The period reports in 4.3g/4.3h therefore always query July 2026.
+**Rankings the reports depend on:**
+
+| Report | Shape |
+|---|---|
+| b · diagnoses | Acute Bronchitis 7 · Hypertension 6 · Influenza Type A 5 · Type 2 Diabetes 4 · Migraine 4 |
+| d · patients per GP | Georgi Ivanov 9 · Elena Koleva 6 · Maria Stoyanova 5 · Nikolay Dimitrov 3 |
+| e · visits per doctor | 11 · 8 · 7 · 6 · 5 · 4 · 3 · 2 — no ties, all 8 doctors present |
+| i · sick leaves per month | 6 distinct months with a clear busiest one |
+| j · sick leaves per doctor | Georgi Ivanov 9 · Maria Stoyanova 6 · Dimitar Petrov 3 · Elena Koleva 2 |
+| Insurance | 5 patients at 6/6 · **2 at 5/6** · 3 at 3/6 · 4 at 1/6 · 10 at 0/6 |
+
+> Doctors 6–8 and patients 16–24 carry a NULL `keycloak_id`: records-only entries, which is a
+> supported state and worth having visible. The realm ships 5 doctor and 15 patient logins.
 
 ## Appendix C — Reset to a clean state
 

@@ -702,3 +702,8 @@ html::-webkit-scrollbar-thumb:hover {
 @media (max-width: 600px) {
     .form-row { grid-template-columns: 1fr; }
 }
+
+/* The insurance report sits outside the lettered ten, so it gets its own accent rather than
+   borrowing one of the four requirement groups' colours. */
+.report-card[data-group="insurance"]::before   { background: linear-gradient(90deg, #2DD4BF, #0D9488); }
+.report-card[data-group="insurance"] .report-group { color: #2DD4BF; }

@@ -79,9 +79,9 @@ Seeded by `realm-export.json`. Passwords match the role name.
 |---|---|---|---|
 | `admin` | `admin` | ADMIN | Everything, plus the audit log |
 | `doctor` | `doctor` | DOCTOR | Dr. Georgi Ivanov — a GP with patients and visits |
-| `doctor2` … `doctor5` | `doctor` | DOCTOR | The other practitioners |
-| `patient` | `patient` | PATIENT | Ivan Dimitrov — has visits, diagnoses and sick leave |
-| `patient2` … `patient15` | `patient` | PATIENT | The rest of the roster |
+| `doctor2` … `doctor5` | `doctor` | DOCTOR | The other practitioners. Doctors 6–8 and patients 16–24 exist as records only, with no account |
+| `patient` | `patient` | PATIENT | Ivan Dimitrov — visits, diagnoses, sick leave, fully insured |
+| `patient2` … `patient15` | `patient` | PATIENT | The rest of the roster. `patient5` is seeded one month short of insured — the boundary case |
 
 Self-registration is open: sign up through Keycloak, then the application asks whether you are a
 patient or a doctor. Patients are activated immediately; doctors wait for an administrator to
@@ -126,25 +126,43 @@ Prescriptions are included too, covering *"назначава лечение (и
 
 ### §3 — The ten reports
 
-| Spec | Where | Endpoint |
-|---|---|---|
-| a. Patients with a given diagnosis | Reports → card 2 | `GET /api/reports/diagnoses/patients?diagnosis=` |
-| b. Most frequent diagnoses | Reports → card 1 | `GET /api/reports/diagnoses/common` |
-| c. Patients of a given GP | Doctors → **Patients** button on GP rows | `GET /api/doctors/{id}/patients` |
-| d. Patient count per GP | Reports → card 3 | `GET /api/reports/doctors/gp-patients` |
-| e. Visit count per doctor | Reports → card 4 | `GET /api/reports/doctors/visits` |
-| f. One patient's visits | Reports → card 9 | `GET /api/visits/patient/{id}` |
-| g. All visits in a period | Reports → card 7 | `GET /api/reports/visits/period` |
-| h. One doctor's visits in a period | Reports → card 8 | `GET /api/reports/visits/doctor/period` |
-| i. Month with most sick leaves | Reports → card 6 | `GET /api/reports/sickleaves/months` |
-| j. Doctors issuing most sick leaves | Reports → card 5 | `GET /api/reports/sickleaves/doctors` |
+| # | Report | Where | Endpoint |
+|---|---|---|---|
+| **a** | Patients with a given diagnosis | Reports → card a | `GET /api/reports/diagnoses/patients?diagnosis=` |
+| **b** | Times diagnosed per condition | Reports → card b | `GET /api/reports/diagnoses/common` |
+| **c** | Patients registered with a given GP | Reports → card c, or the **Patients** button on a GP row | `GET /api/doctors/{id}/patients` |
+| **d** | Patients registered per GP | Reports → card d | `GET /api/reports/doctors/gp-patients` |
+| **e** | Visits recorded per doctor | Reports → card e | `GET /api/reports/doctors/visits` |
+| **f** | Visits for a given patient | Reports → card f | `GET /api/visits/patient/{id}` |
+| **g** | Visits in a given date range | Reports → card g | `GET /api/reports/visits/period` |
+| **h** | Visits for a given doctor in a date range | Reports → card h | `GET /api/reports/visits/doctor/period` |
+| **i** | Sick leaves issued per month | Reports → card i | `GET /api/reports/sickleaves/months` |
+| **j** | Sick leaves issued per doctor | Reports → card j | `GET /api/reports/sickleaves/doctors` |
+
+The cards are laid out in the order the assignment lists them and each carries its letter. That
+order also groups cleanly by subject — a,b diagnoses; c,d,e doctors; f,g,h visits; i,j sick leaves —
+so following the specification and keeping the colour coding are the same arrangement.
+
+**Titles state what a report contains, never what it concludes.** Counts read *"<what is counted>
+per <group>"*; filtered lists read *"<what is listed> for a given <filter>"*. So (i) is *Sick Leaves
+Issued per Month* rather than "Busiest Months", and (j) is *Sick Leaves Issued per Doctor* rather
+than "Doctors Issuing the Most" — both are ranked, and the top row is the answer the assignment
+asks for, but the reader is shown the data rather than asked to trust a verdict in a heading.
+
+Report **f** includes sick leave alongside diagnosis and treatment, covering *"излизал ли е в
+болнични пациентът и за колко време"*.
+
+**Beyond the ten:** an **Insurance Months Covered per Patient** report (`GET /api/reports/patients/insurance`)
+gives the *справка* §1 requires of patient records — every patient with months covered out of six
+and a verdict. The patient's own dashboard shows the same check for themselves, now reporting how
+far short the coverage falls rather than a bare yes or no.
 
 Every report exports to CSV from the button above the results table.
 
 ### §4 — Technology
 
 REST services, MySQL, a user interface, Bean Validation on every request DTO, a
-`@ControllerAdvice` exception handler, 285 automated tests, and Keycloak for user management.
+`@ControllerAdvice` exception handler, 289 automated tests, and Keycloak for user management.
 
 ---
 
@@ -292,7 +310,7 @@ must not be able to leave a real account created or a live user de-roled.
 ./gradlew test
 ```
 
-285 tests, no Docker required — the suite runs against H2 with a mocked identity provider. A JaCoCo
+289 tests, no Docker required — the suite runs against H2 with a mocked identity provider. A JaCoCo
 report is written to `build/reports/jacoco/test/html/index.html`.
 
 | Suite | Covers |

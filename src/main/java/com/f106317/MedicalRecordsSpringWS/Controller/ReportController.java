@@ -5,6 +5,7 @@ import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
 import com.f106317.MedicalRecordsSpringWS.DTO.VisitResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.PendingDoctorResponse;
 import com.f106317.MedicalRecordsSpringWS.Service.DoctorService;
+import com.f106317.MedicalRecordsSpringWS.Service.InsuranceService;
 import com.f106317.MedicalRecordsSpringWS.Service.VisitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -27,12 +28,27 @@ public class ReportController {
 
     private final VisitService visitService;
     private final DoctorService doctorService;
+    private final InsuranceService insuranceService;
 
     @GetMapping("/diagnoses/common")
     public ResponseEntity<List<ReportDTO.DiagnosisCount>> getMostCommonDiagnoses(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         return ResponseEntity.ok(paginate(visitService.getMostCommonDiagnoses(), page, size));
+    }
+
+    /**
+     * Health-insurance standing for every patient.
+     * WHY it belongs to staff rather than only the patient's own dashboard: the specification asks
+     * that the system "прави справка дали са си платили здравните осигуровки през последните 6
+     * месеца" without saying the patient is the only one who may read it — and a doctor deciding
+     * whether a visit is covered is exactly who needs to.
+     */
+    @GetMapping("/patients/insurance")
+    public ResponseEntity<List<ReportDTO.PatientInsuranceStatus>> getPatientInsuranceStatus(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        return ResponseEntity.ok(paginate(insuranceService.getStatusForAllPatients(), page, size));
     }
 
     @GetMapping("/diagnoses/names")

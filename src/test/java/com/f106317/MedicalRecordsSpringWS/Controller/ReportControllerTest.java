@@ -50,6 +50,10 @@ class ReportControllerTest {
     @MockitoBean
     private com.f106317.MedicalRecordsSpringWS.Service.AuditLogService auditLogService;
 
+    /** Backs the health-insurance report — the "справка" §1 asks for, across the whole roster. */
+    @MockitoBean
+    private com.f106317.MedicalRecordsSpringWS.Service.InsuranceService insuranceService;
+
     /** Verifies GET /api/reports/diagnoses/common returns ranked diagnoses. */
     @Test
     @WithMockUser(roles = "ADMIN")

@@ -1239,16 +1239,20 @@ async function loadPatientHistory() {
         // Three states, not two. insuranceStatus stays null when the check could not be run, and
         // reporting that as "Lapsed / Unpaid" told patients their contributions were unpaid on
         // nothing more than a failed request.
+        //
+        // The endpoint returns the month count alongside the verdict, so the badge can say how far
+        // short the coverage falls — "1 of 6 months" is a different conversation from "5 of 6".
         const badge = (bg, border, colour, text) =>
             `<span style="display:inline-block; padding: 0.25rem 0.75rem; background: ${bg}; border: 1px solid ${border}; color: ${colour}; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">${text}</span>`;
 
         let insBadge;
-        if (insuranceStatus === true) {
-            insBadge = badge('rgba(16, 185, 129, 0.2)', '#10B981', '#10B981', '✓ Health Insurance Active');
-        } else if (insuranceStatus === false) {
-            insBadge = badge('rgba(239, 68, 68, 0.2)', '#EF4444', '#EF4444', '✕ Health Insurance Lapsed / Unpaid');
-        } else {
+        if (insuranceStatus === null || typeof insuranceStatus !== 'object') {
             insBadge = badge('rgba(100, 116, 139, 0.2)', '#64748B', '#94A3B8', '? Insurance status unavailable');
+        } else {
+            const months = `${insuranceStatus.coveredMonths} of ${insuranceStatus.requiredMonths} months paid`;
+            insBadge = insuranceStatus.insured
+                ? badge('rgba(16, 185, 129, 0.2)', '#10B981', '#10B981', `✓ Health Insurance Active — ${esc(months)}`)
+                : badge('rgba(239, 68, 68, 0.2)', '#EF4444', '#EF4444', `✕ Health Insurance Lapsed — ${esc(months)}`);
         }
 
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
@@ -1324,57 +1328,80 @@ async function loadFullReportsDashboard() {
         pendingHtml = await renderPendingApprovals();
     }
 
+    // Cards run a–j, the order the assignment lists them in. That order also happens to group
+    // cleanly by subject — a,b diagnoses; c,d,e doctors; f,g,h visits; i,j sick leaves — so
+    // following the specification and keeping the colour coding are the same arrangement, not a
+    // compromise between two. Each card carries its letter so the mapping needs no explaining.
     let html = `
         <h3>Reports</h3>
-        <p style="color: #94A3B8; margin-bottom: 1.5rem;">Select a report to run it against the current records.</p>
-        
+        <p style="color: #94A3B8; margin-bottom: 1.5rem;">
+            The ten reports required by the assignment, lettered as they are listed there.
+            Select one to run it against the current records.
+        </p>
+
         ${pendingHtml}
 
         <div class="reports-grid">
-            <div class="report-card" data-group="diagnoses" onclick="fetchReport('/reports/diagnoses/common', 'Most Common Diagnoses', ['Diagnosis', 'Occurrences'], r => [r.diagnosisName, r.count])">
-                <span class="report-group">Diagnoses</span>
-                <h4>1. Most Common Diagnoses</h4>
-                <p>Which conditions are diagnosed most often.</p>
-            </div>
             <div class="report-card" data-group="diagnoses" onclick="renderReportFilterPanel('diagnosis')">
-                <span class="report-group">Diagnoses</span>
-                <h4>2. Find Patients by Diagnosis</h4>
+                <span class="report-group">a · Diagnoses</span>
+                <h4>Patients with a Given Diagnosis</h4>
                 <p>Everyone who has received a particular diagnosis.</p>
             </div>
-            <div class="report-card" data-group="doctors" onclick="fetchReport('/reports/doctors/gp-patients', 'Patients Registered per GP', ['Doctor ID', 'Doctor Name', 'Patients'], r => [r.doctorId, 'Dr. '+r.doctorName, r.patientCount])">
-                <span class="report-group">Doctors</span>
-                <h4>3. Patients Registered per GP</h4>
+            <div class="report-card" data-group="diagnoses" onclick="fetchReport('/reports/diagnoses/common', 'Times Diagnosed per Condition', ['Diagnosis', 'Times Diagnosed'], r => [r.diagnosisName, r.count])">
+                <span class="report-group">b · Diagnoses</span>
+                <h4>Times Diagnosed per Condition</h4>
+                <p>Which conditions are diagnosed most often, ranked.</p>
+            </div>
+            <div class="report-card" data-group="doctors" onclick="renderReportFilterPanel('gp_patients')">
+                <span class="report-group">c · Doctors</span>
+                <h4>Patients Registered with a Given GP</h4>
+                <p>The roster of one general practitioner.</p>
+            </div>
+            <div class="report-card" data-group="doctors" onclick="fetchReport('/reports/doctors/gp-patients', 'Patients Registered per General Practitioner', ['Doctor ID', 'Doctor Name', 'Patients Registered'], r => [r.doctorId, 'Dr. '+r.doctorName, r.patientCount])">
+                <span class="report-group">d · Doctors</span>
+                <h4>Patients Registered per GP</h4>
                 <p>How many patients each general practitioner looks after.</p>
             </div>
-            <div class="report-card" data-group="doctors" onclick="fetchReport('/reports/doctors/visits', 'Visits Handled per Doctor', ['Doctor ID', 'Doctor Name', 'Visits'], r => [r.doctorId, 'Dr. '+r.doctorName, r.visitCount])">
-                <span class="report-group">Doctors</span>
-                <h4>4. Visits Handled per Doctor</h4>
+            <div class="report-card" data-group="doctors" onclick="fetchReport('/reports/doctors/visits', 'Visits Recorded per Doctor', ['Doctor ID', 'Doctor Name', 'Visits'], r => [r.doctorId, 'Dr. '+r.doctorName, r.visitCount])">
+                <span class="report-group">e · Doctors</span>
+                <h4>Visits Recorded per Doctor</h4>
                 <p>How many examinations each doctor has carried out.</p>
             </div>
-            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/doctors', 'Sick Leaves Issued per Doctor', ['Doctor ID', 'Doctor Name', 'Sick Leaves Issued'], r => [r.doctorId, 'Dr. '+r.doctorName, r.sickLeaveCount])">
-                <span class="report-group">Sick leaves</span>
-                <h4>5. Sick Leaves Issued per Doctor</h4>
-                <p>Which doctors issue the most sick leaves.</p>
-            </div>
-            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/months', 'Busiest Months for Sick Leaves', ['Month', 'Sick Leaves Issued'], r => [fmtMonth(r.year, r.month), r.count])">
-                <span class="report-group">Sick leaves</span>
-                <h4>6. Busiest Months for Sick Leaves</h4>
-                <p>The months of the year when most sick leaves were issued.</p>
+            <div class="report-card" data-group="visits" onclick="renderReportFilterPanel('patient_visits')">
+                <span class="report-group">f · Visits</span>
+                <h4>Visits for a Given Patient</h4>
+                <p>Every visit for one patient, with diagnosis, treatment and sick leave.</p>
             </div>
             <div class="report-card" data-group="visits" onclick="renderReportFilterPanel('dates')">
-                <span class="report-group">Visits</span>
-                <h4>7. All Visits in a Date Range</h4>
+                <span class="report-group">g · Visits</span>
+                <h4>Visits in a Given Date Range</h4>
                 <p>Every visit across the practice between two dates.</p>
             </div>
             <div class="report-card" data-group="visits" onclick="renderReportFilterPanel('doctor_dates')">
-                <span class="report-group">Visits</span>
-                <h4>8. One Doctor's Visits in a Date Range</h4>
+                <span class="report-group">h · Visits</span>
+                <h4>Visits for a Given Doctor in a Date Range</h4>
                 <p>Visits carried out by a chosen doctor between two dates.</p>
             </div>
-            <div class="report-card" data-group="visits" onclick="renderReportFilterPanel('patient_visits')">
-                <span class="report-group">Visits</span>
-                <h4>9. A Patient's Visit History</h4>
-                <p>The complete visit record for one patient.</p>
+            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/months', 'Sick Leaves Issued per Month', ['Month', 'Sick Leaves Issued'], r => [fmtMonth(r.year, r.month), r.count])">
+                <span class="report-group">i · Sick leaves</span>
+                <h4>Sick Leaves Issued per Month</h4>
+                <p>Ranked, so the busiest month of the year is the top row.</p>
+            </div>
+            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/doctors', 'Sick Leaves Issued per Doctor', ['Doctor ID', 'Doctor Name', 'Sick Leaves Issued'], r => [r.doctorId, 'Dr. '+r.doctorName, r.sickLeaveCount])">
+                <span class="report-group">j · Sick leaves</span>
+                <h4>Sick Leaves Issued per Doctor</h4>
+                <p>Ranked, so the doctor issuing the most is the top row.</p>
+            </div>
+        </div>
+
+        <p style="color: #64748B; font-size: 0.85rem; margin: 1.75rem 0 0.75rem;">
+            Beyond the ten — the health-insurance check the assignment requires of patient records.
+        </p>
+        <div class="reports-grid">
+            <div class="report-card" data-group="insurance" onclick="fetchReport('/reports/patients/insurance', 'Insurance Months Covered per Patient', ['Patient ID', 'Patient', 'EGN', 'Months Covered', 'Status'], r => [r.patientId, r.patientName, r.egn, r.coveredMonths + ' of ' + r.requiredMonths, r.insured ? 'Insured' : 'Not insured'])">
+                <span class="report-group">Insurance</span>
+                <h4>Insurance Months Covered per Patient</h4>
+                <p>Months paid out of the six the rule checks, for every patient.</p>
             </div>
         </div>
 
@@ -1474,12 +1501,46 @@ async function renderReportFilterPanel(type) {
                 </div>
             </div>
         `;
+    } else if (type === 'gp_patients') {
+        await fetchDoctorsList();
+        // Only general practitioners have a roster, so listing anyone else would offer a choice
+        // that can only ever come back empty.
+        const gps = doctorsList.filter(d => d.isGP);
+        filterPanel.innerHTML = `
+            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid var(--glass-border); padding: 1.25rem; border-radius: 12px; margin-top: 1rem;">
+                <h4 style="color: #F8FAFC; margin-bottom: 1rem;">Filter Report: Patients Registered with a GP</h4>
+                <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 240px;">
+                        <label style="display: block; color: #94A3B8; margin-bottom: 0.4rem; font-size: 0.88rem;" for="inlineGpSelect">Select General Practitioner:</label>
+                        <select id="inlineGpSelect" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #475569; background: #0F172A; color: white;">
+                            ${gps.length === 0
+                                ? '<option value="">No general practitioners registered</option>'
+                                : gps.map(d => `<option value="${d.id}">Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="runGpPatientsReport()">Generate Report</button>
+                </div>
+            </div>
+        `;
     }
 }
 
 function runDiagnosisReport() {
     const diag = document.getElementById('inlineDiagSelect').value;
-    fetchReport(`/reports/diagnoses/patients?diagnosis=${encodeURIComponent(diag)}`, `Patients diagnosed with: ${diag}`, ['ID', 'Patient Name', 'EGN'], p => [p.id, p.firstName + ' ' + p.lastName, p.egn], true);
+    fetchReport(`/reports/diagnoses/patients?diagnosis=${encodeURIComponent(diag)}`, `Patients diagnosed with: ${diag}`, ['ID', 'Patient Name', 'EGN', 'GP'], p => [p.id, p.firstName + ' ' + p.lastName, p.egn, p.gpDoctorName || '—'], true);
+}
+
+/** Report c — the patients registered with one general practitioner. */
+function runGpPatientsReport() {
+    const gpId = document.getElementById('inlineGpSelect').value;
+    if (!gpId) { alert('Please select a general practitioner.'); return; }
+
+    const gp = doctorsList.find(d => String(d.id) === String(gpId));
+    const gpName = gp ? `${gp.firstName} ${gp.lastName}` : `ID ${gpId}`;
+
+    fetchReport(`/doctors/${gpId}/patients`, `Patients registered with Dr. ${gpName}`,
+        ['Patient ID', 'Patient Name', 'EGN'],
+        p => [p.id, p.firstName + ' ' + p.lastName, p.egn], true);
 }
 
 function runDatesReport() {
@@ -1509,12 +1570,17 @@ function runPatientVisitsReport() {
     const patObj = patientsList.find(p => String(p.id) === String(patId));
     const patName = patObj ? `${patObj.firstName} ${patObj.lastName}` : `ID ${patId}`;
 
-    fetchReport(`/visits/patient/${patId}`, `Visits for Patient: ${patName}`, ['Visit ID', 'Date', 'Doctor', 'Diagnosis', 'Prescription'], v => [
+    // Sick leave is part of the history the assignment asks to be tracked — "излизал ли е в
+    // болнични пациентът и за колко време" — so it belongs in this report, not only on the
+    // patient's own dashboard.
+    fetchReport(`/visits/patient/${patId}`, `Visits for Patient: ${patName}`,
+        ['Visit ID', 'Date', 'Doctor', 'Diagnosis', 'Prescription', 'Sick Leave'], v => [
         v.id,
         fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime),
         'Dr. ' + v.doctorName,
         (v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d=>d.name).join(', ') : '—'),
-        (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—')
+        (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—'),
+        (v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—')
     ], true);
 }
 

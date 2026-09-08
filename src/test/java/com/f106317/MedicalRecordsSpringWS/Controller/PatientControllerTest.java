@@ -127,10 +127,28 @@ class PatientControllerTest {
     @Test
     @WithMockUser(roles = "PATIENT")
     void checkInsurance() throws Exception {
-        when(insuranceService.hasContinuousInsurance(1L)).thenReturn(true);
+        // The endpoint reports the month count alongside the verdict rather than a bare boolean:
+        // "not insured" alone does not distinguish a patient who missed one month from one who has
+        // never paid, and the specification asks for a справка someone reads and acts on.
+        when(insuranceService.getStatus(1L)).thenReturn(
+                new com.f106317.MedicalRecordsSpringWS.DTO.InsuranceStatusResponse(true, 6, 6));
         mockMvc.perform(get("/api/patients/1/insurance"))
                 .andExpect(status().isOk())
-                .andExpect(content().string("true"));
+                .andExpect(jsonPath("$.insured").value(true))
+                .andExpect(jsonPath("$.coveredMonths").value(6))
+                .andExpect(jsonPath("$.requiredMonths").value(6));
+    }
+
+    /** A patient one month short is not insured, and the response says by how much. */
+    @Test
+    @WithMockUser(roles = "PATIENT")
+    void checkInsurance_reportsHowFarShortCoverageFalls() throws Exception {
+        when(insuranceService.getStatus(1L)).thenReturn(
+                new com.f106317.MedicalRecordsSpringWS.DTO.InsuranceStatusResponse(false, 5, 6));
+        mockMvc.perform(get("/api/patients/1/insurance"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.insured").value(false))
+                .andExpect(jsonPath("$.coveredMonths").value(5));
     }
 
     @Test
