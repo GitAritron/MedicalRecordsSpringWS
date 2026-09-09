@@ -23,9 +23,11 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -189,6 +191,50 @@ class InsuranceServiceTest {
         InsurancePaymentRequest req = new InsurancePaymentRequest(LocalDate.of(2026, 8, 1), LocalDate.now());
         assertDoesNotThrow(() -> insuranceService.recordPayment(1L, req, TestAuth.admin()));
         verify(insuranceRepository).save(any());
+    }
+
+    /**
+     * Insurance is bought by the month, so the covered month is the record's identity.
+     * The form is a date picker, so an administrator recording August's contribution may pick any
+     * day in August; storing that day verbatim let the same month be paid for more than once,
+     * because uq_patient_insurance_date compares whole dates.
+     */
+    @Test
+    void recordPayment_normalisesTheCoveredMonthToTheFirst() {
+        Patient patient = new Patient();
+        patient.setId(1L);
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(insuranceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LocalDate paidOn = LocalDate.of(2026, 8, 27);
+        insuranceService.recordPayment(1L,
+                new InsurancePaymentRequest(LocalDate.of(2026, 8, 27), paidOn), TestAuth.admin());
+
+        ArgumentCaptor<PaidInsurance> saved = ArgumentCaptor.forClass(PaidInsurance.class);
+        verify(insuranceRepository).save(saved.capture());
+
+        assertEquals(LocalDate.of(2026, 8, 1), saved.getValue().getInsuranceDate(),
+                "the covered month must be stored as the first of that month");
+        assertEquals(paidOn, saved.getValue().getPaidOn(),
+                "paidOn is when the money actually arrived and must survive untouched");
+    }
+
+    @Test
+    void recordPayment_rejectsASecondPaymentForAMonthAlreadyCovered() {
+        Patient patient = new Patient();
+        patient.setId(1L);
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(insuranceRepository.existsByPatientIdAndInsuranceDate(1L, LocalDate.of(2026, 8, 1)))
+                .thenReturn(true);
+
+        // A different day in the same month - the case the old whole-date comparison let through.
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> insuranceService.recordPayment(1L,
+                        new InsurancePaymentRequest(LocalDate.of(2026, 8, 14), LocalDate.of(2026, 8, 14)),
+                        TestAuth.admin()));
+
+        assertTrue(ex.getMessage().contains("2026-08"), "the message should name the month at issue");
+        verify(insuranceRepository, never()).save(any());
     }
 
     // ──────────────────────────────────────────────

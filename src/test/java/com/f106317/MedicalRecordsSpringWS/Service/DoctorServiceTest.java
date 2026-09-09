@@ -1,5 +1,6 @@
 package com.f106317.MedicalRecordsSpringWS.Service;
 
+import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
 import com.f106317.MedicalRecordsSpringWS.TestAuth;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.AuditLog;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Doctor;
@@ -190,13 +191,20 @@ class DoctorServiceTest {
 
     /** 
      * WHAT: Verifies the custom JPQL query execution for the visit count report. 
-     * WHY: Ensures the Object[] array returned by Spring Data JPA is successfully 
-     * cast and mapped into a typed `DoctorVisitCount` DTO record.
+     * WHY: the query now builds the DoctorVisitCount record itself through a JPQL constructor
+     * expression, so there is no Object[] to cast and a reordered SELECT clause fails at startup
+     * rather than throwing ClassCastException here.
      */
     @Test
     void getDoctorsWithVisitCount() {
-        when(doctorRepository.findDoctorsWithVisitCount()).thenReturn(java.util.Collections.singletonList(new Object[]{doctor, 10L}));
-        assertEquals(1, doctorService.getDoctorsWithVisitCount().size());
+        when(doctorRepository.findDoctorsWithVisitCount())
+                .thenReturn(java.util.List.of(new ReportDTO.DoctorVisitCount(1L, "Dr House", 10L)));
+
+        java.util.List<ReportDTO.DoctorVisitCount> result = doctorService.getDoctorsWithVisitCount();
+
+        assertEquals(1, result.size());
+        assertEquals("Dr House", result.get(0).doctorName());
+        assertEquals(10L, result.get(0).visitCount());
     }
 
     // ──────────────────────────────────────────────

@@ -9,7 +9,9 @@ import com.f106317.MedicalRecordsSpringWS.Data.Entity.Prescription;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.SickLeave;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Specialization;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Visit;
+import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
 import org.hibernate.Hibernate;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -33,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -121,13 +124,15 @@ class RepositoryQueryTest {
         em.persist(juneIvan);
         em.persist(januaryPetar);
 
-        // Ivan: Jan, Feb (twice - the DISTINCT case), Mar, and Jul which sits outside the window.
-        insurance(ivan, LocalDate.of(2026, 1, 15));
-        insurance(ivan, LocalDate.of(2026, 2, 20));
-        insurance(ivan, LocalDate.of(2026, 2, 25));
-        insurance(ivan, LocalDate.of(2026, 3, 5));
-        insurance(ivan, LocalDate.of(2026, 7, 1));
-        insurance(maria, LocalDate.of(2026, 2, 10));
+        // insuranceDate is always the first of the covered month - InsuranceService normalises it,
+        // and test-data.sql seeds it the same way. Ivan covers Jan, Feb and Mar, plus a July
+        // payment that sits outside the windows exercised below. paidOn is the real payment date,
+        // deliberately not the first, to keep the two columns distinguishable.
+        insurance(ivan, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 15));
+        insurance(ivan, LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 20));
+        insurance(ivan, LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 5));
+        insurance(ivan, LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 1));
+        insurance(maria, LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 10));
 
         audit("admin", "APPROVE_DOCTOR", "Doctor", house.getId(), LocalDateTime.of(2026, 1, 1, 8, 0));
         audit("admin", "APPROVE_DOCTOR", "Doctor", wilson.getId(), LocalDateTime.of(2026, 1, 2, 8, 0));
@@ -255,10 +260,10 @@ class RepositoryQueryTest {
         }
 
         @Test
-        void repeatedPaymentsInOneMonthCollapseToASingleKey() {
+        void oneMonthYieldsExactlyOneKey() {
             List<Integer> keys = paidInsuranceRepository.findCoveredMonthKeys(
                     ivan.getId(), LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28));
-            assertEquals(1, keys.size(), "two February payments are still one covered month");
+            assertEquals(1, keys.size());
             assertEquals(202602, keys.get(0));
         }
 
@@ -272,7 +277,7 @@ class RepositoryQueryTest {
         @Test
         void windowBoundsAreInclusive() {
             List<Integer> keys = paidInsuranceRepository.findCoveredMonthKeys(
-                    ivan.getId(), LocalDate.of(2026, 1, 15), LocalDate.of(2026, 1, 15));
+                    ivan.getId(), LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 1));
             assertEquals(List.of(202601), keys, "a payment exactly on both bounds must count");
         }
 
@@ -290,6 +295,89 @@ class RepositoryQueryTest {
                     .filter(row -> ((Number) row[0]).longValue() == ivan.getId())
                     .count();
             assertEquals(3, ivanRows);
+        }
+    }
+
+    /**
+     * These rules live in init.sql and, until the entities declared them too, existed nowhere the
+     * test schema could see — so nothing could prove they were enforced. The @Table and @Check
+     * declarations on PaidInsurance and SickLeave are what make these two tests possible at all.
+     */
+    @Nested
+    @DisplayName("Constraints mirrored from init.sql")
+    class SchemaConstraints {
+
+        /**
+         * Because InsuranceService normalises insuranceDate to the first of the covered month,
+         * this constraint is what enforces "one payment per month per patient". It is the database
+         * half of the rule; the service half is the existsBy check that produces a readable message.
+         */
+        @Test
+        void aPatientCannotBePaidUpTwiceForTheSameMonth() {
+            PaidInsurance duplicate = new PaidInsurance();
+            duplicate.setPatient(em.find(Patient.class, ivan.getId()));
+            duplicate.setInsuranceDate(LocalDate.of(2026, 1, 1));    // January already covered
+            duplicate.setPaidOn(LocalDate.of(2026, 1, 28));          // a different real payment date
+
+            // persist, not flush, is what raises it: id is GenerationType.IDENTITY, so Hibernate
+            // must issue the INSERT immediately to learn the generated key.
+            assertThrows(ConstraintViolationException.class, () -> {
+                em.persist(duplicate);
+                em.flush();
+            }, "uq_patient_insurance_date must reject a second payment covering the same month");
+        }
+
+        @Test
+        void adjacentMonthsAreUnaffected() {
+            PaidInsurance april = new PaidInsurance();
+            april.setPatient(em.find(Patient.class, ivan.getId()));
+            april.setInsuranceDate(LocalDate.of(2026, 4, 1));        // not yet covered
+            april.setPaidOn(LocalDate.of(2026, 4, 9));
+
+            assertDoesNotThrow(() -> {
+                em.persist(april);
+                em.flush();
+            }, "the constraint is per covered month, not per patient");
+        }
+
+        @Test
+        void twoPatientsMayCoverTheSameMonth() {
+            PaidInsurance mariasJanuary = new PaidInsurance();
+            mariasJanuary.setPatient(em.find(Patient.class, maria.getId()));
+            mariasJanuary.setInsuranceDate(LocalDate.of(2026, 1, 1)); // Ivan has January, Maria does not
+            mariasJanuary.setPaidOn(LocalDate.of(2026, 1, 11));
+
+            assertDoesNotThrow(() -> {
+                em.persist(mariasJanuary);
+                em.flush();
+            }, "the constraint is scoped to one patient");
+        }
+
+        @Test
+        void sickLeaveLongerThanAYearIsRejected() {
+            Visit visit = em.find(Visit.class, marchMaria.getId());
+            SickLeave tooLong = new SickLeave();
+            tooLong.setVisit(visit);
+            tooLong.setValidFrom(LocalDate.of(2026, 3, 10));
+            tooLong.setValidForDays(400);
+
+            assertThrows(ConstraintViolationException.class, () -> {
+                em.persist(tooLong);
+                em.flush();
+            }, "chk_valid_for_days bounds a sick leave to 365 days");
+        }
+
+        @Test
+        void aVisitCannotCarryTwoSickLeaves() {
+            SickLeave second = new SickLeave();
+            second.setVisit(em.find(Visit.class, marchIvan.getId()));   // already has one
+            second.setValidFrom(LocalDate.of(2026, 3, 11));
+            second.setValidForDays(2);
+
+            assertThrows(ConstraintViolationException.class, () -> {
+                em.persist(second);
+                em.flush();
+            }, "the unique constraint Hibernate derives from @OneToOne must keep this 1:1");
         }
     }
 
@@ -322,30 +410,33 @@ class RepositoryQueryTest {
          */
         @Test
         void visitCountIncludesDoctorsWithNoVisits() {
-            List<Object[]> rows = doctorRepository.findDoctorsWithVisitCount();
+            List<ReportDTO.DoctorVisitCount> rows = doctorRepository.findDoctorsWithVisitCount();
             assertEquals(3, rows.size());
 
             long chaseCount = rows.stream()
-                    .filter(row -> ((Doctor) row[0]).getId().equals(chase.getId()))
-                    .map(row -> ((Number) row[1]).longValue())
+                    .filter(row -> row.doctorId().equals(chase.getId()))
+                    .map(ReportDTO.DoctorVisitCount::visitCount)
                     .findFirst()
                     .orElseThrow();
             assertEquals(0L, chaseCount);
 
-            long first = ((Number) rows.get(0)[1]).longValue();
-            long last = ((Number) rows.get(rows.size() - 1)[1]).longValue();
-            assertTrue(first >= last, "rows should be ordered by visit count descending");
+            assertTrue(rows.get(0).visitCount() >= rows.get(rows.size() - 1).visitCount(),
+                    "rows should be ordered by visit count descending");
+            assertEquals("Robert Chase", rows.stream()
+                    .filter(row -> row.doctorId().equals(chase.getId()))
+                    .findFirst().orElseThrow().doctorName(),
+                    "the name is built in SQL by CONCAT, not by the caller");
         }
 
         @Test
         void gpPatientCountExcludesNonGpDoctors() {
-            List<Object[]> rows = doctorRepository.findGpDoctorsWithPatientCount();
+            List<ReportDTO.GpDoctorPatientCount> rows = doctorRepository.findGpDoctorsWithPatientCount();
             assertEquals(2, rows.size(), "Dr Chase is not a GP and must not appear");
-            assertTrue(rows.stream().noneMatch(row -> ((Doctor) row[0]).getId().equals(chase.getId())));
+            assertTrue(rows.stream().noneMatch(row -> row.doctorId().equals(chase.getId())));
 
             long housePatients = rows.stream()
-                    .filter(row -> ((Doctor) row[0]).getId().equals(house.getId()))
-                    .map(row -> ((Number) row[1]).longValue())
+                    .filter(row -> row.doctorId().equals(house.getId()))
+                    .map(ReportDTO.GpDoctorPatientCount::patientCount)
                     .findFirst()
                     .orElseThrow();
             assertEquals(2L, housePatients);
@@ -405,10 +496,10 @@ class RepositoryQueryTest {
 
         @Test
         void mostCommonDiagnosesAreOrderedByFrequency() {
-            List<Object[]> rows = diagnosisRepository.findMostCommonDiagnoses();
+            List<ReportDTO.DiagnosisCount> rows = diagnosisRepository.findMostCommonDiagnoses();
             assertEquals(3, rows.size());
-            assertEquals("Flu", rows.get(0)[0]);
-            assertEquals(3L, ((Number) rows.get(0)[1]).longValue());
+            assertEquals("Flu", rows.get(0).diagnosisName());
+            assertEquals(3L, rows.get(0).count());
         }
 
         @Test
@@ -424,21 +515,24 @@ class RepositoryQueryTest {
 
         @Test
         void monthsWithMostSickLeavesGroupsByYearAndMonth() {
-            List<Object[]> rows = sickLeaveRepository.findMonthsWithMostSickLeaves();
+            List<ReportDTO.SickLeaveMonthCount> rows = sickLeaveRepository.findMonthsWithMostSickLeaves();
             assertEquals(2, rows.size(), "March and June each have one sick leave");
             rows.forEach(row -> {
-                assertEquals(2026, ((Number) row[0]).intValue());
-                assertEquals(1L, ((Number) row[2]).longValue());
+                assertEquals(2026, row.year());
+                assertEquals(1L, row.count());
             });
+            assertTrue(rows.stream().anyMatch(r -> r.month() == 3), "March");
+            assertTrue(rows.stream().anyMatch(r -> r.month() == 6), "June");
         }
 
         @Test
         void doctorsWithMostSickLeavesTraversesVisitToDoctor() {
-            List<Object[]> rows = sickLeaveRepository.findDoctorsWithMostSickLeaves();
+            List<ReportDTO.DoctorSickLeaveCount> rows = sickLeaveRepository.findDoctorsWithMostSickLeaves();
             assertEquals(2, rows.size());
             rows.forEach(row -> {
-                assertNotNull(((Doctor) row[0]).getId());
-                assertEquals(1L, ((Number) row[1]).longValue());
+                assertNotNull(row.doctorId());
+                assertNotNull(row.doctorName());
+                assertEquals(1L, row.sickLeaveCount());
             });
         }
     }
@@ -543,11 +637,11 @@ class RepositoryQueryTest {
         visit.setSickLeave(s);
     }
 
-    private void insurance(Patient patient, LocalDate insuranceDate) {
+    private void insurance(Patient patient, LocalDate coveredMonth, LocalDate paidOn) {
         PaidInsurance i = new PaidInsurance();
         i.setPatient(patient);
-        i.setInsuranceDate(insuranceDate);
-        i.setPaidOn(insuranceDate);
+        i.setInsuranceDate(coveredMonth);
+        i.setPaidOn(paidOn);
         em.persist(i);
     }
 

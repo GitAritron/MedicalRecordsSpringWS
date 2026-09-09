@@ -141,6 +141,7 @@ public class ReportController {
     /** Largest page an endpoint will serve, matching the cap AuditLogService already applies. */
     static final int MAX_PAGE_SIZE = 100;
 
+
     /**
      * Returns one page of an already-materialised list.
      * WHY the long: {@code page * size} was computed as an int and silently overflowed to a

@@ -205,22 +205,12 @@ public class DoctorService {
     @Transactional(readOnly = true)
     public List<ReportDTO.DoctorVisitCount> getDoctorsWithVisitCount() {
         return doctorRepository.findDoctorsWithVisitCount().stream()
-                .map(row -> new ReportDTO.DoctorVisitCount(
-                        ((Doctor) row[0]).getId(),
-                        ((Doctor) row[0]).getFirstName() + " " + ((Doctor) row[0]).getLastName(),
-                        (Long) row[1]
-                ))
                 .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public List<ReportDTO.GpDoctorPatientCount> getGpDoctorPatientCounts() {
         return doctorRepository.findGpDoctorsWithPatientCount().stream()
-                .map(row -> new ReportDTO.GpDoctorPatientCount(
-                        ((Doctor) row[0]).getId(),
-                        ((Doctor) row[0]).getFirstName() + " " + ((Doctor) row[0]).getLastName(),
-                        (Long) row[1]
-                ))
                 .collect(Collectors.toList());
     }
 

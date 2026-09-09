@@ -239,9 +239,7 @@ public class VisitService {
 
     @Transactional(readOnly = true)
     public List<ReportDTO.DiagnosisCount> getMostCommonDiagnoses() {
-        return diagnosisRepository.findMostCommonDiagnoses().stream()
-                .map(row -> new ReportDTO.DiagnosisCount((String) row[0], (Long) row[1]))
-                .collect(Collectors.toList());
+        return diagnosisRepository.findMostCommonDiagnoses();
     }
 
     @Transactional(readOnly = true)
@@ -360,22 +358,12 @@ public class VisitService {
 
     @Transactional(readOnly = true)
     public List<ReportDTO.DoctorSickLeaveCount> getDoctorsWithMostSickLeaves() {
-        return sickLeaveRepository.findDoctorsWithMostSickLeaves().stream()
-                .map(row -> {
-                    Doctor d = (Doctor) row[0];
-                    return new ReportDTO.DoctorSickLeaveCount(d.getId(), d.getFirstName() + " " + d.getLastName(), (Long) row[1]);
-                })
-                .collect(Collectors.toList());
+        return sickLeaveRepository.findDoctorsWithMostSickLeaves();
     }
 
     @Transactional(readOnly = true)
     public List<ReportDTO.SickLeaveMonthCount> getMonthsWithMostSickLeaves() {
         return sickLeaveRepository.findMonthsWithMostSickLeaves().stream()
-                .map(row -> new ReportDTO.SickLeaveMonthCount(
-                        ((Number) row[0]).intValue(),
-                        ((Number) row[1]).intValue(),
-                        ((Number) row[2]).longValue()
-                ))
                 .collect(Collectors.toList());
     }
 

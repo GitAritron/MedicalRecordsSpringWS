@@ -1,5 +1,6 @@
 package com.f106317.MedicalRecordsSpringWS.Service;
 
+import com.f106317.MedicalRecordsSpringWS.Exception.KeycloakIntegrationException;
 import com.f106317.MedicalRecordsSpringWS.Exception.UsernameAlreadyExistsException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -105,13 +106,13 @@ public class KeycloakAdminService {
                 log.info("Successfully {}ed role '{}' for user '{}'", verb, roleName, userId);
             } else {
                 log.error("Failed to {} role '{}' for user '{}': {}", verb, roleName, userId, response.getStatusCode());
-                throw new RuntimeException("Failed to " + verb + " Keycloak role: " + response.getStatusCode());
+                throw new KeycloakIntegrationException("Failed to " + verb + " Keycloak role: " + response.getStatusCode());
             }
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error trying to {} Keycloak role '{}' for user '{}': {}", verb, roleName, userId, e.getMessage());
-            throw new RuntimeException("Failed to " + verb + " Keycloak role: " + e.getMessage(), e);
+            throw new KeycloakIntegrationException("Failed to " + verb + " Keycloak role: " + e.getMessage(), e);
         }
     }
 
@@ -125,7 +126,7 @@ public class KeycloakAdminService {
 
         if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
             log.error("Failed to fetch role '{}' from Keycloak: {}", roleName, response.getStatusCode());
-            throw new RuntimeException("Failed to fetch Keycloak role: " + roleName);
+            throw new KeycloakIntegrationException("Failed to fetch Keycloak role: " + roleName);
         }
         return response.getBody();
     }
@@ -182,7 +183,7 @@ public class KeycloakAdminService {
             if (!response.getStatusCode().is2xxSuccessful() || location == null) {
                 log.error("Keycloak did not return a user location for '{}': {}",
                         username, response.getStatusCode());
-                throw new RuntimeException("Keycloak did not report the created user's id");
+                throw new KeycloakIntegrationException("Keycloak did not report the created user's id");
             }
 
             String path = location.getPath();
@@ -196,7 +197,7 @@ public class KeycloakAdminService {
             throw e;
         } catch (Exception e) {
             log.error("Error creating Keycloak user '{}': {}", username, e.getMessage());
-            throw new RuntimeException("Failed to create Keycloak user: " + e.getMessage(), e);
+            throw new KeycloakIntegrationException("Failed to create Keycloak user: " + e.getMessage(), e);
         }
     }
 
@@ -224,14 +225,14 @@ public class KeycloakAdminService {
 
             if (!response.getStatusCode().is2xxSuccessful()) {
                 log.error("Failed to reset password for user '{}': {}", userId, response.getStatusCode());
-                throw new RuntimeException("Failed to reset Keycloak password: " + response.getStatusCode());
+                throw new KeycloakIntegrationException("Failed to reset Keycloak password: " + response.getStatusCode());
             }
             log.info("Reset password for Keycloak user '{}'", userId);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error resetting password for user '{}': {}", userId, e.getMessage());
-            throw new RuntimeException("Failed to reset Keycloak password: " + e.getMessage(), e);
+            throw new KeycloakIntegrationException("Failed to reset Keycloak password: " + e.getMessage(), e);
         }
     }
 
@@ -254,19 +255,19 @@ public class KeycloakAdminService {
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
                 log.error("Failed to read Keycloak user '{}': {}", userId, response.getStatusCode());
-                throw new RuntimeException("Failed to read Keycloak user: " + response.getStatusCode());
+                throw new KeycloakIntegrationException("Failed to read Keycloak user: " + response.getStatusCode());
             }
 
             JsonNode username = objectMapper.readTree(response.getBody()).get("username");
             if (username == null || username.isNull()) {
-                throw new RuntimeException("Keycloak user " + userId + " has no username");
+                throw new KeycloakIntegrationException("Keycloak user " + userId + " has no username");
             }
             return username.asText();
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error reading Keycloak user '{}': {}", userId, e.getMessage());
-            throw new RuntimeException("Failed to read Keycloak user: " + e.getMessage(), e);
+            throw new KeycloakIntegrationException("Failed to read Keycloak user: " + e.getMessage(), e);
         }
     }
 
@@ -299,12 +300,12 @@ public class KeycloakAdminService {
                 JsonNode json = objectMapper.readTree(response.getBody());
                 return json.get("access_token").asText();
             }
-            throw new RuntimeException("Keycloak admin token request failed: " + response.getStatusCode());
+            throw new KeycloakIntegrationException("Keycloak admin token request failed: " + response.getStatusCode());
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error getting Keycloak admin token: {}", e.getMessage());
-            throw new RuntimeException("Failed to obtain Keycloak admin token", e);
+            throw new KeycloakIntegrationException("Failed to obtain Keycloak admin token", e);
         }
     }
 }

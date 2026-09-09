@@ -12,6 +12,16 @@ import java.util.List;
 @Repository
 public interface PaidInsuranceRepository extends JpaRepository<PaidInsurance, Long> {
 
+    /**
+     * Whether this patient already has a payment recorded for a covered month.
+     * <p>
+     * WHY it takes a date rather than a month: {@code insuranceDate} is normalised to the first of
+     * the covered month before it is stored, so the first of the month <em>is</em> the month key.
+     * The caller normalises, then asks. {@code uq_patient_insurance_date} enforces the same rule at
+     * the database, for the race this check cannot cover.
+     */
+    boolean existsByPatientIdAndInsuranceDate(Long patientId, LocalDate insuranceDate);
+
 
     /**
      * Which months one patient has paid for, as sortable {@code year * 100 + month} keys.

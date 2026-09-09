@@ -1853,8 +1853,7 @@ async function submitGpChangeForm(e) {
             method: 'PATCH'
         });
         if (!res.ok) {
-            const err = await res.json().catch(() => null);
-            throw new Error((err && err.message) ? err.message : `HTTP ${res.status}`);
+            throw new Error(await apiErrorMessage(res, 'Failed to update GP'));
         }
         closeModal('gpModal');
         if (currentUserRole === 'PATIENT') {
@@ -1868,11 +1867,28 @@ async function submitGpChangeForm(e) {
 }
 
 // ================= HEALTH INSURANCE =================
+
+/**
+ * Snaps the coverage field to the first of whichever month was picked.
+ * WHY: insurance is bought by the month, so the server stores the 1st regardless of the day chosen.
+ * Without this the form would accept 07.09.2026, report success, and hold 01.09.2026 - the input
+ * would be quietly lying about what it saved. Snapping on change keeps the two the same.
+ * A month input would express this better, but Firefox and Safari fall back to a plain text box.
+ */
+function snapCoverageToFirstOfMonth(input) {
+    if (input.value) {
+        input.value = input.value.slice(0, 8) + '01';
+    }
+}
+
 function openRecordInsuranceModal(patientId) {
     document.getElementById('insurancePatientId').value = patientId;
     document.getElementById('insurancePatientName').value = patientNameById(patientId);
     const today = new Date().toISOString().split('T')[0];
-    document.getElementById('insuranceDate').value = today;
+    // The coverage field identifies a month, not a day: the server normalises whatever is picked to
+    // the first of that month, so defaulting to the 1st keeps the form showing what gets stored.
+    // paidOn is a real date and stays on today.
+    document.getElementById('insuranceDate').value = today.slice(0, 8) + '01';
     document.getElementById('insurancePaidOn').value = today;
     openModal('insuranceModal');
 }
@@ -1890,8 +1906,7 @@ async function submitInsurancePayment(e) {
             body: JSON.stringify({ insuranceDate, paidOn })
         });
         if (!res.ok) {
-            const err = await res.json().catch(() => null);
-            throw new Error((err && err.message) ? err.message : `HTTP ${res.status}`);
+            throw new Error(await apiErrorMessage(res, 'Failed to record payment'));
         }
         closeModal('insuranceModal');
         alert('Insurance payment recorded successfully!');

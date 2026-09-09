@@ -160,12 +160,26 @@ public class InsuranceService {
     public void recordPayment(Long patientId, InsurancePaymentRequest request, Authentication authentication) {
         Patient patient = patientRepository.findById(patientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Patient not found with id: " + patientId));
+        // Insurance is bought by the month, so the covered month is the identity of the record.
+        // The request carries a full date because the form is a date picker, and an administrator
+        // recording February's contribution may pick any day in February. Normalising to the first
+        // makes uq_patient_insurance_date mean "one payment per covered month", which is the rule
+        // the column was always for, and matches the convention the seed data already uses.
+        // paidOn is left exactly as sent - it is when the money actually arrived, and paying late
+        // still covers the right month.
+        LocalDate coveredMonth = request.insuranceDate().withDayOfMonth(1);
+
+        if (insuranceRepository.existsByPatientIdAndInsuranceDate(patientId, coveredMonth)) {
+            throw new IllegalArgumentException("Insurance for "
+                    + YearMonth.from(coveredMonth) + " is already recorded for this patient");
+        }
+
         PaidInsurance payment = new PaidInsurance();
         payment.setPatient(patient);
-        payment.setInsuranceDate(request.insuranceDate());
+        payment.setInsuranceDate(coveredMonth);
         payment.setPaidOn(request.paidOn());
         PaidInsurance saved = insuranceRepository.save(payment);
         auditLogService.log(authentication, "RECORD_INSURANCE", "PaidInsurance", saved.getId(),
-                patient.getFirstName() + " " + patient.getLastName() + " - " + request.insuranceDate());
+                patient.getFirstName() + " " + patient.getLastName() + " - " + YearMonth.from(coveredMonth));
     }
 }

@@ -2,6 +2,7 @@ package com.f106317.MedicalRecordsSpringWS.Exception;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -95,12 +96,64 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(apiError, HttpStatus.CONFLICT);
     }
 
+    /**
+     * Keycloak could not be reached, or answered with something unusable.
+     * WHY 502 rather than the catch-all's 500: nothing is wrong with this service — an upstream
+     * dependency it does not control is unavailable. Reporting it as 500 told the caller "we have
+     * a bug" when the accurate message is "identity provider is down, the record itself is fine",
+     * and it buried a whole class of operational failure in the generic handler's log line.
+     *
+     * A taken username is deliberately not routed here — see {@link UsernameAlreadyExistsException},
+     * which is a healthy Keycloak giving an answer the administrator can act on.
+     */
+    @ExceptionHandler(KeycloakIntegrationException.class)
+    public ResponseEntity<ApiError> handleKeycloakIntegrationFailure(KeycloakIntegrationException ex,
+                                                                     HttpServletRequest request) {
+        log.error("Keycloak integration failure at {}: {}", request.getRequestURI(), ex.getMessage(), ex);
+        ApiError apiError = new ApiError(
+                "IDENTITY_PROVIDER_UNAVAILABLE",
+                "The identity provider could not be reached, so the account operation did not "
+                        + "complete. The medical record itself was not affected. Try again shortly.",
+                request.getRequestURI(),
+                Instant.now(),
+                Map.of()
+        );
+        return new ResponseEntity<>(apiError, HttpStatus.BAD_GATEWAY);
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> handleDataIntegrityViolation(DataIntegrityViolationException ex, HttpServletRequest request) {
         log.error("Data integrity violation at {}: {}", request.getRequestURI(), ex.getMessage());
         ApiError apiError = new ApiError(
                 "DATA_CONFLICT",
                 "The operation conflicts with existing data. A duplicate or constraint violation occurred.",
+                request.getRequestURI(),
+                Instant.now(),
+                Map.of()
+        );
+        return new ResponseEntity<>(apiError, HttpStatus.CONFLICT);
+    }
+
+    /**
+     * Two transactions edited the same row at once and the @Version check on BaseEntity rejected
+     * the later one.
+     * WHY this needs its own handler: without it the exception reaches the catch-all below and a
+     * legitimate concurrency outcome is reported as 500 "An unexpected error occurred" — telling
+     * the user nothing and logging it as a server fault. It is neither: the write was correctly
+     * refused to stop it silently erasing the other edit, and reloading resolves it.
+     *
+     * Note this fires only when the two transactions genuinely interleave. A user who leaves an
+     * edit form open while someone else saves is NOT caught, because the version is not part of
+     * the request DTOs and so never round-trips through the browser.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiError> handleOptimisticLockingFailure(OptimisticLockingFailureException ex,
+                                                                   HttpServletRequest request) {
+        log.warn("Concurrent modification at {}: {}", request.getRequestURI(), ex.getMessage());
+        ApiError apiError = new ApiError(
+                "CONCURRENT_MODIFICATION",
+                "This record was changed by someone else while you were editing it. "
+                        + "Reload it and apply your change again.",
                 request.getRequestURI(),
                 Instant.now(),
                 Map.of()

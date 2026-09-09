@@ -4,6 +4,7 @@ import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
@@ -21,9 +22,11 @@ import java.util.Set;
 
 @Entity
 @Table(name = "visit", uniqueConstraints = {
+        // Two constraints, not one: neither implies the other. A doctor cannot be double-booked, and
+        // separately a patient cannot be in two places at the same time.
         @UniqueConstraint(name = "uq_doctor_slot", columnNames = {"doctor_id", "visit_date", "visit_time"}),
         @UniqueConstraint(name = "uq_patient_slot", columnNames = {"patient_id", "visit_date", "visit_time"})
-})
+}, indexes = @Index(name = "idx_visit_date", columnList = "visit_date"))  // mirrors init.sql
 @Getter
 @Setter
 @NoArgsConstructor

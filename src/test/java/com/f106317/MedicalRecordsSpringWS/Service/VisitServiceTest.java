@@ -1,5 +1,7 @@
 package com.f106317.MedicalRecordsSpringWS.Service;
 
+import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
+import java.util.List;
 import com.f106317.MedicalRecordsSpringWS.TestAuth;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.*;
 import com.f106317.MedicalRecordsSpringWS.DTO.*;
@@ -173,8 +175,14 @@ class VisitServiceTest {
     /** Verifies the aggregated report of most common diagnoses. */
     @Test
     void getMostCommonDiagnoses() {
-        when(diagnosisRepository.findMostCommonDiagnoses()).thenReturn(java.util.Collections.singletonList(new Object[]{"Flu", 10L}));
-        assertEquals(1, visitService.getMostCommonDiagnoses().size());
+        when(diagnosisRepository.findMostCommonDiagnoses())
+                .thenReturn(List.of(new ReportDTO.DiagnosisCount("Flu", 10L)));
+
+        List<ReportDTO.DiagnosisCount> result = visitService.getMostCommonDiagnoses();
+
+        assertEquals(1, result.size());
+        assertEquals("Flu", result.get(0).diagnosisName());
+        assertEquals(10L, result.get(0).count());
     }
 
     /** Verifies patients can be retrieved by their diagnosis name. */
@@ -187,15 +195,26 @@ class VisitServiceTest {
     /** Verifies the report of doctors ranked by sick leaves issued. */
     @Test
     void getDoctorsWithMostSickLeaves() {
-        when(sickLeaveRepository.findDoctorsWithMostSickLeaves()).thenReturn(java.util.Collections.singletonList(new Object[]{doctor, 5L}));
-        assertEquals(1, visitService.getDoctorsWithMostSickLeaves().size());
+        when(sickLeaveRepository.findDoctorsWithMostSickLeaves())
+                .thenReturn(List.of(new ReportDTO.DoctorSickLeaveCount(1L, "Dr House", 5L)));
+
+        List<ReportDTO.DoctorSickLeaveCount> result = visitService.getDoctorsWithMostSickLeaves();
+
+        assertEquals(1, result.size());
+        assertEquals(5L, result.get(0).sickLeaveCount());
     }
 
     /** Verifies the report of months ranked by sick leave count. */
     @Test
     void getMonthsWithMostSickLeaves() {
-        when(sickLeaveRepository.findMonthsWithMostSickLeaves()).thenReturn(java.util.Collections.singletonList(new Object[]{2026, 1, 10L}));
-        assertEquals(1, visitService.getMonthsWithMostSickLeaves().size());
+        when(sickLeaveRepository.findMonthsWithMostSickLeaves())
+                .thenReturn(List.of(new ReportDTO.SickLeaveMonthCount(2026, 1, 10L)));
+
+        List<ReportDTO.SickLeaveMonthCount> result = visitService.getMonthsWithMostSickLeaves();
+
+        assertEquals(1, result.size());
+        assertEquals(2026, result.get(0).year());
+        assertEquals(1, result.get(0).month());
     }
 
     /** Verifies ResourceNotFoundException when creating a visit with a non-existent patient. */

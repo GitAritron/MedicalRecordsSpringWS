@@ -2,6 +2,7 @@ package com.f106317.MedicalRecordsSpringWS.Data.Entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Getter;
@@ -10,8 +11,19 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+/**
+ * An append-only record of who changed what.
+ * WHY no association to the audited row: an audit entry has to outlive the record it describes, and
+ * a deletion is the event most worth keeping. A real foreign key would either block the delete or
+ * cascade the evidence away, so (entityType, entityId) is a deliberate soft reference and
+ * entityLabel keeps a readable snapshot of a row that may no longer exist.
+ */
 @Entity
-@Table(name = "audit_log")
+@Table(name = "audit_log", indexes = {          // mirrors init.sql
+        @Index(name = "idx_al_entity", columnList = "entity_type, entity_id"),
+        @Index(name = "idx_al_actor", columnList = "actor"),
+        @Index(name = "idx_al_created", columnList = "created_at")
+})
 @Getter
 @Setter
 @NoArgsConstructor

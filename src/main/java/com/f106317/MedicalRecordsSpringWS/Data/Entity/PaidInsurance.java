@@ -4,16 +4,30 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Index;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDate;
 
+/**
+ * One month of paid health insurance for one patient.
+ * WHY two dates: {@code insuranceDate} is the month being covered, {@code paidOn} is when the money
+ * actually arrived. Paying three months late still covers the correct months, so the continuous-cover
+ * check must read the former and never the latter.
+ */
 @Entity
-@Table(name = "paid_insurance")
+@Table(name = "paid_insurance",
+        // Mirrors init.sql. Hibernate ignores this under ddl-auto: validate, but the test schema is
+        // generated from these entities — without it the rule is unenforced and untestable there.
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_patient_insurance_date",
+                columnNames = {"patient_id", "insurance_date"}),
+        indexes = @Index(name = "idx_pi_patient_date", columnList = "patient_id, insurance_date"))
 @Getter
 @Setter
 @NoArgsConstructor
