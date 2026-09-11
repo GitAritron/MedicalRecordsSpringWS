@@ -2,7 +2,9 @@ let keycloak;
 let currentUserRole = '';
 let currentDoctorId = null;
 
-const API_BASE = 'http://localhost:8080/api';
+// Relative, because Spring serves this page, this script and the API from one origin: the browser
+// resolves it against wherever the page was loaded from, so no host needs writing down here.
+const API_BASE = '/api';
 
 // Global reference lists for dropdowns and safe lookup
 let doctorsList = [];
@@ -15,10 +17,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initKeycloak() {
+    // Rendered into #app by WebController from app.keycloak.* in application.yml, rather than
+    // written here: pointing the front end at another Keycloak is then a configuration change, and
+    // it moves in step with the backend's issuer-uri, which is built from the same property.
+    const config = document.getElementById('app').dataset;
     keycloak = new Keycloak({
-        url: 'http://localhost:8081',
-        realm: 'medical-records',
-        clientId: 'frontend-client'
+        url: config.keycloakUrl,
+        realm: config.keycloakRealm,
+        clientId: config.keycloakClientId
     });
 
     // pkceMethod S256: frontend-client is a public client, so it has no secret and Keycloak would

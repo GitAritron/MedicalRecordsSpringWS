@@ -16,7 +16,11 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: http://localhost:8081/realms/medical-records
+          # Built from app.keycloak.public-url rather than written out, because the two must agree:
+          # Keycloak stamps a token's iss claim from the host the browser reached it on, and this is
+          # the value the resource server checks iss against. Configured separately, changing one
+          # without the other means every API call rejects the login that just succeeded.
+          issuer-uri: ${app.keycloak.public-url}/realms/${app.keycloak.realm}
           jwk-set-uri: http://localhost:8081/realms/medical-records/protocol/openid-connect/certs
 server:
   port: 8080
@@ -33,3 +37,13 @@ keycloak:
     realm: medical-records
     username: ${KEYCLOAK_ADMIN_USERNAME:admin}
     password: ${KEYCLOAK_ADMIN_PASSWORD:admin}
+
+app:
+  keycloak:
+    # Where the BROWSER reaches Keycloak - rendered into index.html by WebController, and the base
+    # of issuer-uri above. No trailing slash. jwk-set-uri and keycloak.admin.server-url stay
+    # separate on purpose: those are server-to-server calls, which in a real deployment may use a
+    # different (internal) hostname than the one browsers use.
+    public-url: ${KEYCLOAK_PUBLIC_URL:http://localhost:8081}
+    realm: medical-records
+    client-id: frontend-client

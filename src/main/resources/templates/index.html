@@ -6,10 +6,16 @@
     <title>Medical Records System</title>
     <link rel="stylesheet" th:href="@{/style.css}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <script src="http://localhost:8081/js/keycloak.js"></script>
+    <!-- The adapter is served by Keycloak itself, so its version always matches the server's. -->
+    <script th:src="|${keycloakUrl}/js/keycloak.js|"></script>
 </head>
 <body>
-    <div id="app">
+    <!-- WebController renders these from application.yml (app.keycloak.*); app.js reads them to
+         configure the adapter, so Keycloak's location lives in one place instead of three. -->
+    <div id="app"
+         th:data-keycloak-url="${keycloakUrl}"
+         th:data-keycloak-realm="${keycloakRealm}"
+         th:data-keycloak-client-id="${keycloakClientId}">
         <header>
             <div class="logo">MedicalRecords</div>
             <!--
