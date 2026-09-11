@@ -226,9 +226,17 @@ public class PatientService {
     }
 
     /**
-     * Helper method to validate and retrieve the GP doctor.
-     * WHY: The specification requires that a patient is registered with a GP. 
-     * This ensures the provided ID actually belongs to a doctor flagged as 'isGP = true'.
+     * Resolves the GP a patient is being registered with - or none.
+     * <p>
+     * WHY a missing GP is allowed: the specification expects every patient to be registered with a
+     * GP, and that is the normal state here, but enforcing it as a hard rule would cost more than it
+     * protects. A GP who leaves the practice would either have to be undeletable or take their
+     * patients' medical records with them. Instead patient.gp_doctor_id is nullable and
+     * ON DELETE SET NULL: the records survive, and the patient is without a GP until one is chosen
+     * again - which a patient may do for themselves through updatePatientGp.
+     * <p>
+     * WHY the isGP check: an id that is given must name a doctor who actually practises as a GP,
+     * not merely any doctor.
      */
     private com.f106317.MedicalRecordsSpringWS.Data.Entity.Doctor resolveGpDoctor(Long doctorId) {
         if (doctorId == null) {
