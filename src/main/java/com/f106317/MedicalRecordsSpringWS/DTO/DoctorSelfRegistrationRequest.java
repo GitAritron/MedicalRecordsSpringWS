@@ -19,6 +19,13 @@ public record DoctorSelfRegistrationRequest(
         @NotBlank(message = "Last name is required")
         @Size(max = 100, message = "Last name cannot exceed 100 characters")
         String lastName,
+        /**
+         * API-only, and empty in practice. The registration form does not offer specializations —
+         * it always sends {@code []} — because an administrator sets them when approving the
+         * applicant, which is the same step that grants the DOCTOR role. The field stays because
+         * the service applies any non-empty set, so a caller who does know its specializations can
+         * state them; {@code @NotNull} keeps "absent" from being a third case alongside empty.
+         */
         @NotNull(message = "Specialization IDs are required")
         Set<Long> specializationIds
 ) {}

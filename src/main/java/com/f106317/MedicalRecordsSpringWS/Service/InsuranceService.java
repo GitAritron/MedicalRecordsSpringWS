@@ -34,16 +34,8 @@ public class InsuranceService {
     static final int REQUIRED_MONTHS = 6;
 
     /**
-     * Whether the patient's contributions run unbroken across the last six months.
-     * The verdict alone; {@link #getStatus} carries the run and the months still owed.
-     */
-    @Transactional(readOnly = true)
-    public boolean hasContinuousInsurance(Long patientId) {
-        return getStatus(patientId).insured();
-    }
-
-    /**
-     * The same check, reported rather than reduced to a flag.
+     * Whether the patient's contributions run unbroken across the last six months, reported rather
+     * than reduced to a flag.
      * WHY: "not insured" alone does not say whether a patient missed one month or has never paid,
      * which is the difference between a reminder and a refusal.
      */

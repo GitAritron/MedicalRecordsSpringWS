@@ -188,9 +188,11 @@ redirect to `/auth` in the Network tab — the query string carries `code_challe
 | 3.2a | ADMIN | Reports | Report cards render, no error banner; the pending-approvals banner appears only when a doctor is awaiting approval |
 | 3.2b | ADMIN | Visits | 46 visits listed with patient, doctor, diagnosis |
 | 3.2c | DOCTOR | My Patients | Dr. Georgi Ivanov's roster — **9 patients** (ids 1–9), the largest of the four |
+| 3.2c-2 | DOCTOR (`doctor2`) | My Patients | Dr. Dimitar Petrov is not a GP, so the screen is titled **Patients You Have Seen** and lists the distinct patients from his own visits — not "No patients assigned to you." Same for `doctor4` |
 | 3.2d | PATIENT | My Medical History | Ivan Dimitrov's visits, each with diagnosis, prescription and any sick leave, plus a green **Health Insurance Active** badge with no months outstanding |
 | 3.2e | ADMIN | Patients | An **Insurance** column on every row — verdict plus the run, e.g. *Insured 6/6*, *Not insured 3/6* |
-| 3.2f | DOCTOR | My Patients | The same Insurance column, plus **Visits** and **+ Insurance** actions. Previously this screen showed name and EGN and nothing else |
+| 3.2f | DOCTOR | My Patients | The same Insurance column and a **Visits** action, and **no + Insurance button** on any row — recording a payment is an administrator's action. Previously this screen showed name and EGN and nothing else |
+| 3.2f-2 | DOCTOR | All Patients | Likewise no **+ Insurance**. A direct `POST /api/patients/1/insurance` with the doctor's token returns **403** |
 | 3.2g | ADMIN | Visits | A **Sick Leave** column. The other two visit views always had it; this one did not |
 | 3.2h | ADMIN | Audit Logs | The **Actor** column shows usernames (`admin`, `doctor`), not Keycloak UUIDs |
 
@@ -236,6 +238,8 @@ As **admin** unless noted. For each: create, read back, edit, delete.
 | 4.1g | **Diagnosis** | Open that visit → add diagnosis `Test Diagnosis` | Appears in the visit's diagnosis list |
 | 4.1h | **Prescription** | Same visit → add prescription `Test medication 10mg` | Appears in the prescription list |
 | 4.1i | **Sick leave** | Same visit → issue sick leave from today, 5 days | Appears; the form is replaced by the issued record |
+| 4.1i-2 | **Edit clinical items** | Same visit → ✎ on the diagnosis, change it to `Revised Diagnosis`; ✎ on the prescription, change the dose; ✎ on the sick leave, change it to 7 days and **Save** | Each shows the new value. The audit log records `UPDATE Diagnosis`, `UPDATE Prescription` and `UPDATE SickLeave` — not a delete followed by a create |
+| 4.1i-3 | Sick-leave bound on edit | ✎ the sick leave, enter `400` days, **Save** | Refused with the 1–365 message; **Cancel** restores the issued record unchanged |
 | 4.1j | Delete clinical items | Remove the diagnosis, prescription, and sick leave via ✕ | Each disappears |
 | 4.1k | Visit delete | Delete the visit | Row disappears |
 | 4.1l | Patient delete | Delete `Test Patient` | Row disappears |
@@ -552,12 +556,17 @@ Medical text is entered by doctors and rendered across several screens.
 
 ### 6.5 Pagination bounds
 
+Only the audit log paginates. Reports return their complete result — they used to default to 50 rows
+and slice the rest away in memory, which saved nothing (the full list was already built) and silently
+dropped rows off the end of a report.
+
 | # | Request | Expect |
 |---|---|---|
-| 6.5a | `/api/reports/doctors/visits?page=0&size=2` | 2 rows |
-| 6.5b | `/api/reports/doctors/visits?page=715827883&size=3` | **200** with `[]` — not a 500 |
-| 6.5c | `/api/reports/doctors/visits?page=-1&size=-5` | **200**, clamped to the first page |
-| 6.5d | `/api/reports/doctors/visits?size=100000` | **200**, at most 100 rows |
+| 6.5a | `/api/audit-logs?page=0&size=2` | 2 entries, `page.size` 2, `page.totalElements` the full count |
+| 6.5b | `/api/audit-logs?page=715827883&size=3` | **200** with empty `content` — not a 500 |
+| 6.5c | `/api/audit-logs?page=-1&size=-5` | **200**, clamped to the first page |
+| 6.5d | `/api/audit-logs?size=100000` | **200**, at most 100 entries |
+| 6.5e | `/api/reports/doctors/visits?page=0&size=2` | **200** with **every** doctor — the leftover query string is ignored |
 
 ---
 

@@ -42,6 +42,13 @@ Then start the application:
 
 Open **http://localhost:8080** and press *Login*.
 
+To see the SQL each screen issues, along with Spring Security's authorization decisions, start it
+with the `dev` profile instead:
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=dev'
+```
+
 Both the medical records and Keycloak's own data live in the MySQL container, in separate schemas
 (`medical_records_db` and `keycloak`). Accounts created at runtime therefore survive
 `docker compose down` — before this, Keycloak ran on dev-mode H2 inside the container with no

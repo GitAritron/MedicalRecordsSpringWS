@@ -31,10 +31,8 @@ public class ReportController {
     private final InsuranceService insuranceService;
 
     @GetMapping("/diagnoses/common")
-    public ResponseEntity<List<ReportDTO.DiagnosisCount>> getMostCommonDiagnoses(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(visitService.getMostCommonDiagnoses(), page, size));
+    public ResponseEntity<List<ReportDTO.DiagnosisCount>> getMostCommonDiagnoses() {
+        return ResponseEntity.ok(visitService.getMostCommonDiagnoses());
     }
 
     /**
@@ -45,10 +43,8 @@ public class ReportController {
      * whether a visit is covered is exactly who needs to.
      */
     @GetMapping("/patients/insurance")
-    public ResponseEntity<List<ReportDTO.PatientInsuranceStatus>> getPatientInsuranceStatus(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(insuranceService.getStatusForAllPatients(), page, size));
+    public ResponseEntity<List<ReportDTO.PatientInsuranceStatus>> getPatientInsuranceStatus() {
+        return ResponseEntity.ok(insuranceService.getStatusForAllPatients());
     }
 
     @GetMapping("/diagnoses/names")
@@ -69,63 +65,47 @@ public class ReportController {
 
     @GetMapping("/diagnoses/patients")
     public ResponseEntity<List<PatientResponse>> getPatientsByDiagnosis(
-            @RequestParam String diagnosis,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(visitService.getPatientsByDiagnosis(diagnosis), page, size));
+            @RequestParam String diagnosis) {
+        return ResponseEntity.ok(visitService.getPatientsByDiagnosis(diagnosis));
     }
 
     @GetMapping("/doctors/visits")
-    public ResponseEntity<List<ReportDTO.DoctorVisitCount>> getDoctorsWithVisitCount(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(doctorService.getDoctorsWithVisitCount(), page, size));
+    public ResponseEntity<List<ReportDTO.DoctorVisitCount>> getDoctorsWithVisitCount() {
+        return ResponseEntity.ok(doctorService.getDoctorsWithVisitCount());
     }
 
     @GetMapping("/doctors/gp-patients")
-    public ResponseEntity<List<ReportDTO.GpDoctorPatientCount>> getGpDoctorPatientCounts(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(doctorService.getGpDoctorPatientCounts(), page, size));
+    public ResponseEntity<List<ReportDTO.GpDoctorPatientCount>> getGpDoctorPatientCounts() {
+        return ResponseEntity.ok(doctorService.getGpDoctorPatientCounts());
     }
 
     @GetMapping("/sickleaves/months")
-    public ResponseEntity<List<ReportDTO.SickLeaveMonthCount>> getMonthsWithMostSickLeaves(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(visitService.getMonthsWithMostSickLeaves(), page, size));
+    public ResponseEntity<List<ReportDTO.SickLeaveMonthCount>> getMonthsWithMostSickLeaves() {
+        return ResponseEntity.ok(visitService.getMonthsWithMostSickLeaves());
     }
 
     @GetMapping("/sickleaves/doctors")
-    public ResponseEntity<List<ReportDTO.DoctorSickLeaveCount>> getDoctorsWithMostSickLeaves(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(visitService.getDoctorsWithMostSickLeaves(), page, size));
+    public ResponseEntity<List<ReportDTO.DoctorSickLeaveCount>> getDoctorsWithMostSickLeaves() {
+        return ResponseEntity.ok(visitService.getDoctorsWithMostSickLeaves());
     }
 
     @GetMapping("/visits/period")
     public ResponseEntity<List<VisitResponse>> getVisitsInPeriod(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(visitService.getVisitsInPeriod(start, end), page, size));
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+        return ResponseEntity.ok(visitService.getVisitsInPeriod(start, end));
     }
 
     @GetMapping("/visits/doctor/period")
     public ResponseEntity<List<VisitResponse>> getVisitsByDoctorInPeriod(
             @RequestParam Long doctorId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        return ResponseEntity.ok(paginate(visitService.getVisitsByDoctorInPeriod(doctorId, start, end), page, size));
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+        return ResponseEntity.ok(visitService.getVisitsByDoctorInPeriod(doctorId, start, end));
     }
 
     @GetMapping("/visits/patients")
-    public ResponseEntity<List<VisitResponse>> getVisitsByAllPatients(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
+    public ResponseEntity<List<VisitResponse>> getVisitsByAllPatients() {
         List<VisitResponse> sorted = visitService.getAllVisits().stream()
                 .sorted((a, b) -> {
                     int patientCmp = a.patientName().compareToIgnoreCase(b.patientName());
@@ -135,28 +115,6 @@ public class ReportController {
                     return a.visitDate().compareTo(b.visitDate());
                 })
                 .collect(Collectors.toList());
-        return ResponseEntity.ok(paginate(sorted, page, size));
-    }
-
-    /** Largest page an endpoint will serve, matching the cap AuditLogService already applies. */
-    static final int MAX_PAGE_SIZE = 100;
-
-
-    /**
-     * Returns one page of an already-materialised list.
-     * WHY the long: {@code page * size} was computed as an int and silently overflowed to a
-     * negative offset for large page numbers, so the {@code start >= size} guard passed and
-     * subList threw IndexOutOfBoundsException — a 500 from a query string alone. Widening the
-     * multiplication before the comparison removes the wrap, and clamping size keeps a caller
-     * from requesting an unbounded page.
-     */
-    private <T> List<T> paginate(List<T> data, int page, int size) {
-        int safeSize = Math.clamp(size, 1, MAX_PAGE_SIZE);
-        long start = (long) Math.max(0, page) * safeSize;
-        if (start >= data.size()) {
-            return List.of();
-        }
-        int from = (int) start;
-        return data.subList(from, Math.min(from + safeSize, data.size()));
+        return ResponseEntity.ok(sorted);
     }
 }

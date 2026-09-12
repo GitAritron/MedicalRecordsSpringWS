@@ -32,6 +32,7 @@ public interface VisitRepository extends JpaRepository<Visit, Long> {
      * WHAT: A JPQL query that filters all visits between two dates.
      * WHY: Fulfills the requirement "List of visits to all doctors in a given period".
      */
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"patient", "doctor", "diagnoses", "prescriptions", "sickLeave"})
     @Query("SELECT v FROM Visit v WHERE v.visitDate BETWEEN :startDate AND :endDate ORDER BY v.visitDate, v.visitTime")
     List<Visit> findVisitsInPeriod(@Param("startDate") LocalDate startDate,
                                    @Param("endDate") LocalDate endDate);
@@ -40,6 +41,7 @@ public interface VisitRepository extends JpaRepository<Visit, Long> {
      * WHAT: A JPQL query that filters visits by a specific doctor ID and within a date range.
      * WHY: Fulfills the requirement "List of visits to a specific doctor for a given period".
      */
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"patient", "doctor", "diagnoses", "prescriptions", "sickLeave"})
     @Query("SELECT v FROM Visit v WHERE v.doctor.id = :doctorId AND v.visitDate BETWEEN :startDate AND :endDate ORDER BY v.visitDate, v.visitTime")
     List<Visit> findVisitsByDoctorInPeriod(@Param("doctorId") Long doctorId,
                                            @Param("startDate") LocalDate startDate,

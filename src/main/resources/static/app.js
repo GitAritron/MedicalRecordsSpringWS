@@ -233,13 +233,15 @@ async function loadDashboard() {
 /**
  * Whether the signed-in user holds a PATIENT or DOCTOR role with no matching record behind it.
  *
- * WHY this state exists: deleting a patient or doctor removes the clinical record only — the
- * Keycloak identity and its realm role are deliberately left alone, because deciding whether to
- * delete, disable or de-role an account is identity-provider policy, and doing it from here would
- * mean a non-atomic write across two systems. The consequence is that such a user can still sign
- * in. Without this check they were routed to a dashboard for a record that no longer exists and
- * shown "Could not find your patient profile", with no way to recover: the registration screen
- * only appears for users with no role, and they still have one.
+ * WHY this state exists: deleting a patient or doctor removes the clinical record and revokes the
+ * realm role, but the Keycloak account itself survives — deciding whether to delete or disable an
+ * account is identity-provider policy, and doing it from here would mean a non-atomic write across
+ * two systems. The role revocation is also best-effort: revokeRoleQuietly logs a Keycloak failure
+ * and lets the deletion stand, so a role can outlive its record. Add a role granted outside the
+ * application and the same state appears. Such a user can still sign in, and without this check
+ * they were routed to a dashboard for a record that no longer exists and shown "Could not find
+ * your patient profile", with no way to recover: the registration screen only appears for users
+ * with no role, and they still have one.
  *
  * Treating them as unregistered lets them create a new profile, which is the recoverable outcome.
  * Administrators are exempt — an ADMIN role is not backed by a patient or doctor record.
@@ -489,6 +491,9 @@ function closeModal(modalId) {
         document.getElementById('sickLeaveDisplay').innerHTML = '';
         document.getElementById('sickLeaveForm').style.display = 'flex';
         currentEditVisitId = null;
+        currentVisitClinicalData = null;
+        editingSickLeaveId = null;
+        renderSickLeaveFormMode();
         loadDoctorVisits();
     }
 }
@@ -538,7 +543,7 @@ async function submitSpecForm(e) {
  */
 async function fetchInsuranceStatuses() {
     try {
-        const res = await fetchWithAuth(`${API_BASE}/reports/patients/insurance?size=100`);
+        const res = await fetchWithAuth(`${API_BASE}/reports/patients/insurance`);
         if (!res.ok) return {};
         const rows = await res.json();
         return Object.fromEntries(rows.map(r => [r.patientId, r]));
@@ -681,10 +686,8 @@ async function loadAllPatients() {
             html += `<tr><td>${safeName}</td><td>${esc(p.egn)}</td><td>${esc(p.gpDoctorName || 'Not assigned')}</td><td>${insuranceCell(insurance[p.id])}</td>`;
             html += `<td>`;
             html += `<button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `;
-            if (currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR') {
-                html += `<button class="action-btn btn-insurance" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button> `;
-            }
             if (currentUserRole === 'ADMIN') {
+                html += `<button class="action-btn btn-insurance" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button> `;
                 html += `<button class="action-btn btn-edit" onclick="editPatient(${p.id})">Edit</button> `;
                 html += `<button class="action-btn btn-delete" onclick="deletePatient(${p.id})">Delete</button>`;
             }
@@ -990,6 +993,16 @@ function populateVisitSelects(selectedPatientId = null, selectedDoctorId = null)
 
 let currentEditVisitId = null;
 
+/**
+ * The clinical data last rendered for the open visit, and the sick leave being edited.
+ *
+ * WHY the visit is held rather than passed: the edit handlers need the current text to prefill, and
+ * an onclick attribute carrying it would break on the first apostrophe — exactly what TEST_PLAN
+ * 6.4c guards against elsewhere. Handlers take an id and read the value from here instead.
+ */
+let currentVisitClinicalData = null;
+let editingSickLeaveId = null;
+
 async function submitVisitForm(e) {
     e.preventDefault();
     const id = document.getElementById('visitId').value;
@@ -1057,13 +1070,18 @@ function showClinicalDataSection(visit) {
 }
 
 function renderExistingClinicalData(visit) {
+    currentVisitClinicalData = visit;
+
     // Diagnoses
     const diagList = document.getElementById('diagnosisList');
     if (visit.diagnoses && visit.diagnoses.length > 0) {
         diagList.innerHTML = visit.diagnoses.map(d =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #1E3A5F; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(d.name)}</span>
-                <button type="button" onclick="removeDiagnosis(${d.id})" class="btn-remove">✕</button>
+                <span style="white-space: nowrap;">
+                    <button type="button" onclick="editDiagnosis(${d.id})" class="btn-inline-edit" title="Edit diagnosis">✎</button>
+                    <button type="button" onclick="removeDiagnosis(${d.id})" class="btn-remove" title="Remove diagnosis">✕</button>
+                </span>
             </div>`
         ).join('');
     } else {
@@ -1076,7 +1094,10 @@ function renderExistingClinicalData(visit) {
         prescList.innerHTML = visit.prescriptions.map(p =>
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(16, 185, 129, 0.1); border: 1px solid #065F46; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(p.note)}</span>
-                <button type="button" onclick="removePrescription(${p.id})" class="btn-remove">✕</button>
+                <span style="white-space: nowrap;">
+                    <button type="button" onclick="editPrescription(${p.id})" class="btn-inline-edit" title="Edit prescription">✎</button>
+                    <button type="button" onclick="removePrescription(${p.id})" class="btn-remove" title="Remove prescription">✕</button>
+                </span>
             </div>`
         ).join('');
     } else {
@@ -1090,13 +1111,30 @@ function renderExistingClinicalData(visit) {
         slDisplay.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(245, 158, 11, 0.1); border: 1px solid #92400E; padding: 0.4rem 0.75rem; border-radius: 8px;">
                 <span style="color: #E2E8F0;">From ${fmtDate(visit.sickLeave.validFrom)} for ${visit.sickLeave.validForDays} days</span>
-                <button type="button" onclick="removeSickLeave(${visit.sickLeave.id})" class="btn-remove">✕</button>
+                <span style="white-space: nowrap;">
+                    <button type="button" onclick="editSickLeave()" class="btn-inline-edit" title="Edit sick leave">✎</button>
+                    <button type="button" onclick="removeSickLeave(${visit.sickLeave.id})" class="btn-remove" title="Remove sick leave">✕</button>
+                </span>
             </div>`;
-        slForm.style.display = 'none';
+        // A visit carries at most one sick leave, so the form below is the issue form only while
+        // none exists. editSickLeave() reopens it prefilled to amend the one that does.
+        slForm.style.display = editingSickLeaveId === visit.sickLeave.id ? 'flex' : 'none';
     } else {
         slDisplay.innerHTML = '';
+        editingSickLeaveId = null;
         slForm.style.display = 'flex';
     }
+    renderSickLeaveFormMode();
+}
+
+/** Keeps the sick-leave form's button saying what pressing it will do. */
+function renderSickLeaveFormMode() {
+    const button = document.getElementById('sickLeaveSubmitBtn');
+    const cancel = document.getElementById('sickLeaveCancelBtn');
+    if (!button) return;
+    const editing = editingSickLeaveId !== null;
+    button.textContent = editing ? 'Save' : '+ Issue';
+    if (cancel) cancel.style.display = editing ? 'inline-block' : 'none';
 }
 
 async function refreshVisitAndRender() {
@@ -1137,17 +1175,86 @@ async function addPrescriptionToVisit() {
     } catch (err) { alert(err.message); }
 }
 
+/**
+ * Issues a sick leave, or saves the one being edited.
+ * The two share a body — SickLeaveRequest is the same record for POST and PUT — so they share the
+ * form rather than duplicating a date picker and its 1–365 bound.
+ */
 async function addSickLeaveToVisit() {
     const validFrom = document.getElementById('newSickLeaveFrom').value;
     const validForDays = document.getElementById('newSickLeaveDays').value;
     if (!validFrom || !validForDays) { alert('Please fill in both date and number of days.'); return; }
+    const days = Number(validForDays);
+    if (!Number.isInteger(days) || days < 1 || days > 365) {
+        alert('A sick leave runs for 1 to 365 days.');
+        return;
+    }
+    const editing = editingSickLeaveId !== null;
     try {
-        const res = await fetchWithAuth(`${API_BASE}/visits/sickleave`, {
-            method: 'POST', body: JSON.stringify({ visitId: currentEditVisitId, validFrom, validForDays: Number(validForDays) })
-        });
+        const res = await fetchWithAuth(
+            editing ? `${API_BASE}/visits/sickleave/${editingSickLeaveId}` : `${API_BASE}/visits/sickleave`, {
+                method: editing ? 'PUT' : 'POST',
+                body: JSON.stringify({ visitId: currentEditVisitId, validFrom, validForDays: days })
+            });
         if (!res.ok) {
-            throw new Error(await apiErrorMessage(res, 'Failed to issue sick leave'));
+            throw new Error(await apiErrorMessage(res, editing ? 'Failed to update sick leave' : 'Failed to issue sick leave'));
         }
+        editingSickLeaveId = null;
+        await refreshVisitAndRender();
+    } catch (err) { alert(err.message); }
+}
+
+/** Reopens the sick-leave form over the existing certificate so its dates can be corrected. */
+function editSickLeave() {
+    const sickLeave = currentVisitClinicalData && currentVisitClinicalData.sickLeave;
+    if (!sickLeave) return;
+    editingSickLeaveId = sickLeave.id;
+    document.getElementById('newSickLeaveFrom').value = sickLeave.validFrom;
+    document.getElementById('newSickLeaveDays').value = sickLeave.validForDays;
+    document.getElementById('sickLeaveForm').style.display = 'flex';
+    renderSickLeaveFormMode();
+}
+
+function cancelEditSickLeave() {
+    editingSickLeaveId = null;
+    document.getElementById('newSickLeaveFrom').value = '';
+    document.getElementById('newSickLeaveDays').value = '';
+    if (currentVisitClinicalData) renderExistingClinicalData(currentVisitClinicalData);
+}
+
+/**
+ * Corrects a diagnosis in place.
+ * WHY editing rather than delete-and-re-add: the specification names editing for diagnoses and
+ * sick leaves, and re-adding records DELETE + CREATE in the audit log where a correction happened.
+ */
+async function editDiagnosis(id) {
+    const current = (currentVisitClinicalData.diagnoses || []).find(d => d.id === id);
+    if (!current) return;
+    const name = prompt('Diagnosis:', current.name);
+    if (name === null) return;
+    if (!name.trim()) { alert('Please enter a diagnosis name.'); return; }
+    if (name.trim() === current.name) return;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/visits/diagnosis/${id}`, {
+            method: 'PUT', body: JSON.stringify({ visitId: currentEditVisitId, name: name.trim() })
+        });
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to update diagnosis'));
+        await refreshVisitAndRender();
+    } catch (err) { alert(err.message); }
+}
+
+async function editPrescription(id) {
+    const current = (currentVisitClinicalData.prescriptions || []).find(p => p.id === id);
+    if (!current) return;
+    const note = prompt('Prescription:', current.note);
+    if (note === null) return;
+    if (!note.trim()) { alert('Please enter a prescription.'); return; }
+    if (note.trim() === current.note) return;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/visits/prescription/${id}`, {
+            method: 'PUT', body: JSON.stringify({ visitId: currentEditVisitId, note: note.trim() })
+        });
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to update prescription'));
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
 }
@@ -1235,6 +1342,32 @@ async function loadDoctorVisits() {
 
 // ================= OTHERS =================
 
+/** The patients registered with this doctor as their GP. */
+async function fetchGpRoster(doctorId) {
+    const res = await fetchWithAuth(`${API_BASE}/doctors/${doctorId}/patients`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+}
+
+/**
+ * The distinct patients this doctor has examined, in the same shape as the roster.
+ * Built from the visit list because no endpoint answers this directly, and a doctor may read both
+ * lists already — this adds no access, only a screen that is no longer blank.
+ */
+async function fetchPatientsSeenByDoctor(doctorId) {
+    const [visitsRes, patientsRes] = await Promise.all([
+        fetchWithAuth(`${API_BASE}/visits`),
+        fetchWithAuth(`${API_BASE}/patients`)
+    ]);
+    if (!visitsRes.ok) throw new Error(`HTTP ${visitsRes.status}`);
+    if (!patientsRes.ok) throw new Error(`HTTP ${patientsRes.status}`);
+
+    const visits = await visitsRes.json();
+    const seen = new Set(visits.filter(v => v.doctorId === doctorId).map(v => v.patientId));
+    const patients = await patientsRes.json();
+    return patients.filter(p => seen.has(p.id));
+}
+
 async function loadMyPatients() {
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = '<p>Loading your patients...</p>';
@@ -1247,24 +1380,33 @@ async function loadMyPatients() {
         const doctor = await docResponse.json();
         currentDoctorId = doctor.id;
 
-        const patResponse = await fetchWithAuth(`${API_BASE}/doctors/${doctor.id}/patients`);
-        if (!patResponse.ok) throw new Error(`HTTP ${patResponse.status}`);
-        const patients = await patResponse.json();
+        // WHY two sources: only a GP has a roster. The other doctors — two of the five seeded ones —
+        // have patients they have examined but none registered with them, so the roster query
+        // returns nothing and this screen, which is where a doctor lands, was permanently empty for
+        // them. For those, the patients they have seen is the list this screen is asking for.
+        const patients = doctor.isGP
+            ? await fetchGpRoster(doctor.id)
+            : await fetchPatientsSeenByDoctor(doctor.id);
         const insurance = await fetchInsuranceStatuses();
 
-        let html = `<h3>My Patients (Dr. ${esc(doctor.firstName)} ${esc(doctor.lastName)})</h3>`;
+        const heading = doctor.isGP ? 'My Patients' : 'Patients You Have Seen';
+        let html = `<h3>${heading} (Dr. ${esc(doctor.firstName)} ${esc(doctor.lastName)})</h3>`;
         if (patients.length === 0) {
-            html += '<p>No patients assigned to you.</p>';
+            html += doctor.isGP
+                ? '<p>No patients assigned to you.</p>'
+                : '<p>You have not examined any patients yet.</p>';
         } else {
-            // Same columns and actions as All Patients minus the GP column, which would repeat this
-            // doctor's own name on every row. A GP looking at their roster needs the same two things
-            // as anywhere else: the visit history, and whether the patient is covered.
+            // Same columns as All Patients minus the GP column — on a roster it would repeat this
+            // doctor's own name on every row, and All Patients carries it for anyone who needs it.
+            // A doctor looking at their own patients needs the same two things as anywhere else:
+            // the visit history, and whether the patient is covered. Covered is a reading only —
+            // recording a payment is an administrator's action, not visit information, so this
+            // screen has no + Insurance button.
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th><th onclick="sortTable(2, this)">Insurance</th><th>Actions</th></tr></thead><tbody>';
             patients.forEach(p => {
                 html += `<tr><td>${esc(p.firstName)} ${esc(p.lastName)}</td><td>${esc(p.egn)}</td>`
                      + `<td>${insuranceCell(insurance[p.id])}</td>`
-                     + `<td><button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `
-                     + `<button class="action-btn btn-insurance" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button></td></tr>`;
+                     + `<td><button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button></td></tr>`;
             });
             html += '</tbody></table>';
         }

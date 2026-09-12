@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Executes every repository query against a real database.
  *
  * WHY this class exists: the rest of the suite mocks all nine repositories, so the twelve JPQL
- * statements and the four {@code @EntityGraph} fetch plans were never run — only parsed at
+ * statements and the seven {@code @EntityGraph} fetch plans were never run — only parsed at
  * context startup. That is precisely how M1 survived into a demo: a fetch plan that pulls two
  * collections at once compiles fine and throws MultipleBagFetchException the moment it executes.
  * Mocked repositories cannot catch that class of defect, because the mock returns whatever the
@@ -177,6 +177,39 @@ class RepositoryQueryTest {
             List<Visit> visits = assertDoesNotThrow(() -> visitRepository.findByPatientId(ivan.getId()));
             assertEquals(2, visits.size());
             visits.forEach(v -> {
+                assertTrue(Hibernate.isInitialized(v.getDiagnoses()));
+                assertTrue(Hibernate.isInitialized(v.getPrescriptions()));
+            });
+        }
+
+        /**
+         * The two period reports render exactly what {@code findAll} renders — VisitResponse walks
+         * patient, doctor, diagnoses, prescriptions and sick leave for every row — so they need the
+         * same fetch plan. They were written without one, and each row then cost five extra selects.
+         * Adding {@code @EntityGraph} to a {@code @Query} is also where MultipleBagFetchException
+         * would reappear, so these run the plan rather than trusting it parses.
+         */
+        @Test
+        void findVisitsInPeriodAppliesTheFetchPlan() {
+            List<Visit> march = assertDoesNotThrow(() -> visitRepository.findVisitsInPeriod(
+                    LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 31)));
+            assertEquals(2, march.size());
+            march.forEach(v -> {
+                assertTrue(Hibernate.isInitialized(v.getPatient()), "patient should be fetched");
+                assertTrue(Hibernate.isInitialized(v.getDoctor()), "doctor should be fetched");
+                assertTrue(Hibernate.isInitialized(v.getDiagnoses()), "diagnoses should be fetched");
+                assertTrue(Hibernate.isInitialized(v.getPrescriptions()), "prescriptions should be fetched");
+            });
+        }
+
+        @Test
+        void findVisitsByDoctorInPeriodAppliesTheFetchPlan() {
+            List<Visit> housesYear = assertDoesNotThrow(() -> visitRepository.findVisitsByDoctorInPeriod(
+                    house.getId(), LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31)));
+            assertEquals(2, housesYear.size());
+            housesYear.forEach(v -> {
+                assertTrue(Hibernate.isInitialized(v.getPatient()));
+                assertTrue(Hibernate.isInitialized(v.getDoctor()));
                 assertTrue(Hibernate.isInitialized(v.getDiagnoses()));
                 assertTrue(Hibernate.isInitialized(v.getPrescriptions()));
             });

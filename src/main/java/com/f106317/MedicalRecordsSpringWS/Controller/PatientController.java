@@ -171,9 +171,13 @@ public class PatientController {
 
     /**
      * Records a health insurance contribution payment.
+     * WHY administrators only: the specification limits doctors to entering and editing "само"
+     * (only) the information of examinations they performed, and an insurance contribution is not
+     * examination information. Doctors keep the read above — deciding whether a visit is covered
+     * needs the status, not the ability to record a payment.
      */
     @PostMapping("/{id}/insurance")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> recordInsurancePayment(@PathVariable Long id, @Valid @RequestBody InsurancePaymentRequest request, Authentication authentication) {
         insuranceService.recordPayment(id, request, authentication);
         return ResponseEntity.status(HttpStatus.CREATED).build();

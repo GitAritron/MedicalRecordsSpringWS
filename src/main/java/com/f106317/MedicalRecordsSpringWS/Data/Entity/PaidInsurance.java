@@ -4,7 +4,6 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Index;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -24,10 +23,11 @@ import java.time.LocalDate;
 @Table(name = "paid_insurance",
         // Mirrors init.sql. Hibernate ignores this under ddl-auto: validate, but the test schema is
         // generated from these entities — without it the rule is unenforced and untestable there.
+        // No separate index on (patient_id, insurance_date): MySQL backs the unique constraint with
+        // one over exactly those columns in that order, so a second would be maintained for nothing.
         uniqueConstraints = @UniqueConstraint(
                 name = "uq_patient_insurance_date",
-                columnNames = {"patient_id", "insurance_date"}),
-        indexes = @Index(name = "idx_pi_patient_date", columnList = "patient_id, insurance_date"))
+                columnNames = {"patient_id", "insurance_date"}))
 @Getter
 @Setter
 @NoArgsConstructor

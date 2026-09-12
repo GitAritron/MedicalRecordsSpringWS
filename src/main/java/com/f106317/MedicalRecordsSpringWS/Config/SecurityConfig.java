@@ -39,7 +39,6 @@ public class SecurityConfig {
                 // The browser requests /favicon.ico on every page load without a bearer token,
                 // so leaving it authenticated produced a 401 in the console on every screen.
                 .requestMatchers("/", "/*.css", "/*.js", "/favicon.ico").permitAll()
-                .requestMatchers("/api/**").authenticated()
                 .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2
@@ -54,9 +53,12 @@ public class SecurityConfig {
      * NOTE: this is inert as the application currently stands. Spring serves index.html, app.js and
      * the API from the same origin (http://localhost:8080), so the browser makes no cross-origin
      * request and no preflight ever reaches this configuration. It is kept, rather than deleted, so
-     * that serving the front end from its own origin later is a change to the list below and
-     * nothing else. The token endpoint at :8081 is a separate matter — Keycloak governs that
-     * through the client's own webOrigins, not through this bean.
+     * that serving the front end from its own origin later takes two changes and no more: the
+     * origin list below, and an absolute API base for the front end — app.js resolves API_BASE
+     * relative to whatever origin serves it, which a separately hosted front end would no longer
+     * share. WebController already renders Keycloak's URL into the page; rendering the API base the
+     * same way would leave only the list below. The token endpoint at :8081 is a separate matter —
+     * Keycloak governs that through the client's own webOrigins, not through this bean.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {

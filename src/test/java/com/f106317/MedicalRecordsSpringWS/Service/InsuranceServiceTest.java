@@ -59,9 +59,9 @@ class InsuranceServiceTest {
 
     /** All 6 months of the window run unbroken back from this one, so the patient is insured. */
     @Test
-    void hasContinuousInsurance_true() {
+    void insuredVerdict_true() {
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(monthsBack(6));
-        assertTrue(insuranceService.hasContinuousInsurance(1L));
+        assertTrue(insuranceService.getStatus(1L).insured());
     }
 
     /**
@@ -70,15 +70,15 @@ class InsuranceServiceTest {
      * calendar months while requiring only six, so a patient could skip a month and still pass.
      */
     @Test
-    void hasContinuousInsurance_falseWhenOneMonthMissing() {
+    void insuredVerdict_falseWhenOneMonthMissing() {
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(monthsBack(5));
-        assertFalse(insuranceService.hasContinuousInsurance(1L));
+        assertFalse(insuranceService.getStatus(1L).insured());
     }
 
     @Test
-    void hasContinuousInsurance_falseWhenNoPayments() {
+    void insuredVerdict_falseWhenNoPayments() {
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(List.of());
-        assertFalse(insuranceService.hasContinuousInsurance(1L));
+        assertFalse(insuranceService.getStatus(1L).insured());
     }
 
     /**
@@ -95,7 +95,7 @@ class InsuranceServiceTest {
      * case a plain tally cannot see.
      */
     @Test
-    void hasContinuousInsurance_zeroWhenTheyStoppedBeforeLastMonth() {
+    void insuredVerdict_zeroWhenTheyStoppedBeforeLastMonth() {
         YearMonth twoBack = YearMonth.now().minusMonths(2);
         List<Integer> olderOnly = new java.util.ArrayList<>();
         for (int i = 0; i < 4; i++) {
@@ -116,10 +116,10 @@ class InsuranceServiceTest {
      * end today — so that neither a 7th month nor a future-dated payment can be counted.
      */
     @Test
-    void hasContinuousInsurance_windowSpansExactlySixMonthsEndingToday() {
+    void insuredVerdict_windowSpansExactlySixMonthsEndingToday() {
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(monthsBack(6));
 
-        insuranceService.hasContinuousInsurance(1L);
+        insuranceService.getStatus(1L).insured();
 
         ArgumentCaptor<LocalDate> start = ArgumentCaptor.forClass(LocalDate.class);
         ArgumentCaptor<LocalDate> end = ArgumentCaptor.forClass(LocalDate.class);
@@ -143,7 +143,7 @@ class InsuranceServiceTest {
      * patient who skipped a month must still fail however many payments they made.
      */
     @Test
-    void hasContinuousInsurance_falseWhenAMonthIsSkippedInsideTheRun() {
+    void insuredVerdict_falseWhenAMonthIsSkippedInsideTheRun() {
         List<Integer> withAGap = new java.util.ArrayList<>(monthsBack(7));
         withAGap.remove(2);   // paid every month except the one two back
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(withAGap);
@@ -159,7 +159,7 @@ class InsuranceServiceTest {
      * unbroken through last month is insured, exactly as an unpaid current bill is not yet overdue.
      */
     @Test
-    void hasContinuousInsurance_trueWhenTheRunEndsLastMonthAndThisOneIsNotYetPaid() {
+    void insuredVerdict_trueWhenTheRunEndsLastMonthAndThisOneIsNotYetPaid() {
         List<Integer> throughLastMonth = new java.util.ArrayList<>();
         YearMonth m = YearMonth.now().minusMonths(1);
         for (int i = 0; i < 6; i++) {

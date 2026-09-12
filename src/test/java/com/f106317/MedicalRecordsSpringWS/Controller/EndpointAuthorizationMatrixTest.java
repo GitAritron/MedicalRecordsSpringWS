@@ -108,9 +108,11 @@ class EndpointAuthorizationMatrixTest {
                 write(HttpMethod.POST, "/api/patients", PATIENT, "ADMIN"),
                 write(HttpMethod.PUT, "/api/patients/1", PATIENT, "ADMIN"),
                 write(HttpMethod.DELETE, "/api/patients/1", null, "ADMIN"),
-                write(HttpMethod.POST, "/api/patients/1/insurance", INSURANCE, "ADMIN", "DOCTOR"),
-                // Note: doctors are excluded here even though the service check they reach would
-                // admit them — the controller rule is the narrower of the two.
+                // Administrators only: the specification lets doctors enter and edit "само" (only)
+                // information about examinations they performed, and a contribution payment is not
+                // that. The GET above stays open to them — reading whether a visit is covered is
+                // the справка the specification does ask for.
+                write(HttpMethod.POST, "/api/patients/1/insurance", INSURANCE, "ADMIN"),
                 write(HttpMethod.PATCH, "/api/patients/1/gp?gpDoctorId=1", null, "ADMIN", "PATIENT"),
 
                 // ── Doctors ───────────────────────────────────────────────
@@ -151,7 +153,6 @@ class EndpointAuthorizationMatrixTest {
                 get("/api/reports/doctors/gp-patients", "ADMIN", "DOCTOR"),
                 get("/api/reports/sickleaves/months", "ADMIN", "DOCTOR"),
                 get("/api/reports/sickleaves/doctors", "ADMIN", "DOCTOR"),
-                get("/api/reports/visits/patients", "ADMIN", "DOCTOR"),
                 get("/api/reports/diagnoses/names", "ADMIN", "DOCTOR"),
                 get("/api/reports/diagnoses/patients?diagnosis=Flu", "ADMIN", "DOCTOR"),
                 get("/api/reports/visits/period?start=2026-01-01&end=2026-12-31", "ADMIN", "DOCTOR"),
