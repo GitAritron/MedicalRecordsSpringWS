@@ -20,10 +20,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * Global Security Configuration for the Medical Records application.
- * Configures Spring Security to act as an OAuth2 Resource Server with Keycloak JWT tokens.
- */
+// OAuth2 Resource Server config - validates Keycloak JWTs and maps realm roles.
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
@@ -36,8 +33,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authorize -> authorize
-                // The browser requests /favicon.ico on every page load without a bearer token,
-                // so leaving it authenticated produced a 401 in the console on every screen.
+                // static assets don't carry a token
                 .requestMatchers("/", "/*.css", "/*.js", "/favicon.ico").permitAll()
                 .anyRequest().authenticated()
             )
@@ -47,19 +43,7 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /**
-     * CORS for the single-page front end.
-     * <p>
-     * NOTE: this is inert as the application currently stands. Spring serves index.html, app.js and
-     * the API from the same origin (http://localhost:8080), so the browser makes no cross-origin
-     * request and no preflight ever reaches this configuration. It is kept, rather than deleted, so
-     * that serving the front end from its own origin later takes two changes and no more: the
-     * origin list below, and an absolute API base for the front end — app.js resolves API_BASE
-     * relative to whatever origin serves it, which a separately hosted front end would no longer
-     * share. WebController already renders Keycloak's URL into the page; rendering the API base the
-     * same way would leave only the list below. The token endpoint at :8081 is a separate matter —
-     * Keycloak governs that through the client's own webOrigins, not through this bean.
-     */
+    // CORS config - currently same-origin, ready for separate frontend deployment.
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
@@ -72,9 +56,7 @@ public class SecurityConfig {
         return source;
     }
 
-    /**
-     * Custom JWT converter that reads roles from Keycloak's nested realm_access.roles claim.
-     */
+    // Extracts realm roles from Keycloak's JWT claim structure.
     public Converter<Jwt, AbstractAuthenticationToken> keycloakJwtConverter() {
         return jwt -> {
             Collection<GrantedAuthority> authorities = extractRealmRoles(jwt);

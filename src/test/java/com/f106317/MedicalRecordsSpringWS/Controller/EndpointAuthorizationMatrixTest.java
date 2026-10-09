@@ -114,6 +114,11 @@ class EndpointAuthorizationMatrixTest {
                 // the справка the specification does ask for.
                 write(HttpMethod.POST, "/api/patients/1/insurance", INSURANCE, "ADMIN"),
                 write(HttpMethod.PATCH, "/api/patients/1/gp?gpDoctorId=1", null, "ADMIN", "PATIENT"),
+                // The correction view for contributions. Administrators only: the verdict everyone
+                // else needs is the GET above, and these three can rewrite what it reports.
+                get("/api/patients/1/insurance/payments", "ADMIN"),
+                write(HttpMethod.PUT, "/api/patients/1/insurance/payments/1", INSURANCE, "ADMIN"),
+                write(HttpMethod.DELETE, "/api/patients/1/insurance/payments/1", null, "ADMIN"),
 
                 // ── Doctors ───────────────────────────────────────────────
                 get("/api/doctors", "ADMIN", "DOCTOR", "PATIENT"),
@@ -126,6 +131,8 @@ class EndpointAuthorizationMatrixTest {
                 write(HttpMethod.DELETE, "/api/doctors/1", null, "ADMIN"),
                 write(HttpMethod.POST, "/api/doctors/1/approve", null, "ADMIN"),
                 write(HttpMethod.POST, "/api/doctors/specializations", SPECIALIZATION, "ADMIN"),
+                write(HttpMethod.PUT, "/api/doctors/specializations/1", SPECIALIZATION, "ADMIN"),
+                write(HttpMethod.DELETE, "/api/doctors/specializations/1", null, "ADMIN"),
 
                 // ── Visits and clinical documents ─────────────────────────
                 get("/api/visits", "ADMIN", "DOCTOR"),

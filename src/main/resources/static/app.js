@@ -286,7 +286,8 @@ async function renderNewUserRoleSelection() {
                     <div style="max-width: 550px; margin: 2rem auto; text-align: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #38BDF8; padding: 2rem; border-radius: 12px;">
                         <h3 style="color: #38BDF8;">Profile already created</h3>
                         <p style="color: #94A3B8; margin-top: 0.75rem;">Your patient profile exists but your account has not picked up the PATIENT role yet.</p>
-                        <button class="btn btn-primary" style="margin-top: 1.25rem;" onclick="location.reload()">Reload</button>
+                        <p style="color: #64748B; font-size: 0.85rem; margin-top: 0.75rem;">Reloading cannot grant the role — re-submitting your registration can.</p>
+                        <button class="btn btn-primary" style="margin-top: 1.25rem;" onclick="retryPatientActivation()">Retry activation</button>
                     </div>`;
                 return;
             }
@@ -296,7 +297,11 @@ async function renderNewUserRoleSelection() {
         console.error('Could not read registration status', err);
     }
 
-    contentArea.innerHTML = `
+    renderRolePicker();
+}
+
+function renderRolePicker() {
+    document.getElementById('content-area').innerHTML = `
         <div style="max-width: 550px; margin: 2rem auto; text-align: center;">
             <h3>Welcome, ${esc(keycloak.tokenParsed.preferred_username)}!</h3>
 
@@ -317,6 +322,26 @@ async function renderNewUserRoleSelection() {
             <div id="selfRegContainer" style="margin-top: 2rem; text-align: left;"></div>
         </div>
     `;
+}
+
+/**
+ * Finishes a registration whose PATIENT grant did not go through.
+ *
+ * WHY it re-opens the form rather than pressing a button on the user's behalf: the record is found
+ * by the token subject, but the request still has to satisfy the registration payload's validation,
+ * and nothing on this screen knows the EGN — the status endpoint returns two booleans. Since
+ * self-registration is now idempotent, re-submitting writes no second record; it grants the role
+ * and returns the record that already exists.
+ */
+async function retryPatientActivation() {
+    renderRolePicker();
+    await showPatientRegistrationForm();
+    const container = document.getElementById('selfRegContainer');
+    container.insertAdjacentHTML('afterbegin', `
+        <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid #38BDF8; color: #94A3B8; padding: 0.9rem 1rem; border-radius: 8px; margin-bottom: 1rem;">
+            Your profile already exists — re-enter your details to finish activating your account.
+            No second record will be created.
+        </div>`);
 }
 
 /**
@@ -419,8 +444,10 @@ async function submitSelfPatientRegistration(e) {
             const container = document.getElementById('selfRegContainer');
             container.innerHTML = `
                 <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10B981; color: #10B981; padding: 1.5rem; border-radius: 12px; text-align: center;">
-                    <h4>Registration complete</h4>
-                    <p>Your patient profile has been created and approved. Please reload the page to access your dashboard.</p>
+                    <h4>Registration saved</h4>
+                    <p>Your patient profile has been created. Your account has not picked up the PATIENT role
+                       yet — reload to try again. If this screen comes back, press <em>Retry activation</em>
+                       there; patients need no approval, so the only thing outstanding is the role itself.</p>
                     <button class="btn btn-primary" style="margin-top: 1rem;" onclick="location.reload()">Reload Now</button>
                 </div>
             `;
@@ -434,8 +461,7 @@ async function submitSelfDoctorRegistration(e) {
     // administrator may grant GP status.
     const doctorData = {
         firstName: document.getElementById('selfDocFirstName').value.trim(),
-        lastName: document.getElementById('selfDocLastName').value.trim(),
-        specializationIds: []
+        lastName: document.getElementById('selfDocLastName').value.trim()
     };
 
     try {
@@ -528,12 +554,85 @@ async function submitSpecForm(e) {
         setTimeout(() => {
             closeModal('specModal');
             if (msgEl) msgEl.innerHTML = '';
+            // Refresh the management screen if that is what opened this form.
+            if (document.querySelector('#content-area h3')?.textContent === 'Specializations') {
+                manageSpecializations();
+            }
         }, 1200);
     } catch (err) {
         if (msgEl) {
             msgEl.innerHTML = `<p style="color: #EF4444; margin: 0.5rem 0;">Error: ${esc(err.message)}</p>`;
         }
     }
+}
+
+/**
+ * The specializations, with the controls to rename and remove them.
+ *
+ * WHY it exists: specializations were create-only, so a misspelt one was permanent and appeared on
+ * every doctor holding it — and the specification gives administrators the right to edit all the
+ * information in the system.
+ */
+async function manageSpecializations() {
+    const contentArea = document.getElementById('content-area');
+    contentArea.innerHTML = '<p>Loading specializations...</p>';
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/doctors/specializations`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        specializationsList = await res.json();
+
+        let html = '<h3>Specializations</h3>';
+        html += `<button class="btn btn-primary btn-add-new" onclick="openAddSpecModal()">+ Add Specialization</button> `;
+        html += `<button class="btn btn-secondary btn-add-new" onclick="loadDoctorsDirectory()">← Back to Doctors</button>`;
+
+        if (specializationsList.length === 0) {
+            html += '<p class="muted-label">No specializations recorded.</p>';
+        } else {
+            html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">ID</th>'
+                 + '<th onclick="sortTable(1, this)">Name</th><th>Actions</th></tr></thead><tbody>';
+            specializationsList.forEach(s => {
+                html += `<tr><td>${s.id}</td><td>${esc(s.name)}</td>`
+                     + `<td><button class="action-btn btn-edit" onclick="renameSpecialization(${s.id})">Rename</button> `
+                     + `<button class="action-btn btn-delete" onclick="deleteSpecialization(${s.id})">Delete</button></td></tr>`;
+            });
+            html += '</tbody></table>';
+        }
+        contentArea.innerHTML = html;
+    } catch (err) {
+        contentArea.innerHTML = `<p class="error-text">Error loading specializations: ${esc(err.message)}</p>`;
+    }
+}
+
+async function renameSpecialization(id) {
+    const current = specializationsList.find(s => s.id === id);
+    if (!current) return;
+    const name = prompt('Specialization name:', current.name);
+    if (name === null) return;
+    if (!name.trim()) { alert('Please enter a name.'); return; }
+    if (name.trim() === current.name) return;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/doctors/specializations/${id}`, {
+            method: 'PUT', body: JSON.stringify({ name: name.trim() })
+        });
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to rename specialization'));
+        await manageSpecializations();
+    } catch (err) { alert(err.message); }
+}
+
+/**
+ * Deletes a specialization, warning that it comes off every doctor holding it.
+ * The doctors themselves are untouched — only the join rows go, and a doctor with no specialization
+ * is a valid record.
+ */
+async function deleteSpecialization(id) {
+    const current = specializationsList.find(s => s.id === id);
+    const name = current ? current.name : `#${id}`;
+    if (!confirm(`Delete "${name}"? It will be removed from every doctor who holds it. The doctors themselves are kept.`)) return;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/doctors/specializations/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to delete specialization'));
+        await manageSpecializations();
+    } catch (err) { alert(err.message); }
 }
 
 /**
@@ -665,8 +764,21 @@ async function deletePatient(id) {
     } catch (err) { alert(err.message); }
 }
 
+/**
+ * Which patient list the user came from, so "← Back to Patients" returns to the screen whose tab is
+ * highlighted. It used to always return to All Patients, which left a doctor arriving from My
+ * Patients looking at a different list than the tab said.
+ */
+let patientListOrigin = 'all';
+
+function backToPatientList() {
+    return patientListOrigin === 'mine' ? loadMyPatients() : loadAllPatients();
+}
+
 async function loadAllPatients() {
     const contentArea = document.getElementById('content-area');
+    managingInsuranceForPatientId = null;   // this screen replaces the insurance one
+    patientListOrigin = 'all';
     contentArea.innerHTML = '<p>Loading patients...</p>';
     try {
         const response = await fetchWithAuth(`${API_BASE}/patients`);
@@ -687,7 +799,7 @@ async function loadAllPatients() {
             html += `<td>`;
             html += `<button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `;
             if (currentUserRole === 'ADMIN') {
-                html += `<button class="action-btn btn-insurance" onclick="openRecordInsuranceModal(${p.id})">+ Insurance</button> `;
+                html += `<button class="action-btn btn-insurance" onclick="manageInsurance(${p.id})">Insurance</button> `;
                 html += `<button class="action-btn btn-edit" onclick="editPatient(${p.id})">Edit</button> `;
                 html += `<button class="action-btn btn-delete" onclick="deletePatient(${p.id})">Delete</button>`;
             }
@@ -870,7 +982,7 @@ async function loadDoctorsDirectory() {
         let html = `<h3>Doctors Directory</h3>`;
         if (currentUserRole === 'ADMIN') {
             html += `<button class="btn btn-primary btn-add-new" onclick="openAddDoctorModal()">+ Add New Doctor</button> `;
-            html += `<button class="btn btn-secondary btn-add-new" onclick="openAddSpecModal()">+ Add Specialization</button>`;
+            html += `<button class="btn btn-secondary btn-add-new" onclick="manageSpecializations()">Specializations</button>`;
         }
 
         // Clinical staff get an Actions column; only admins get the editing controls inside it.
@@ -880,11 +992,20 @@ async function loadDoctorsDirectory() {
         if (showActions) html += `<th>Actions</th>`;
         html += `</tr></thead><tbody>`;
 
-        doctorsList.forEach(doc => {
+        // Patients see the doctors they may be treated by or register with, so an application
+        // nobody has approved does not belong in their directory — it names someone who cannot yet
+        // sign in. Staff see every row, with the applications marked.
+        const visible = currentUserRole === 'PATIENT'
+            ? doctorsList.filter(doc => !doc.pending)
+            : doctorsList;
+
+        visible.forEach(doc => {
             const specs = doc.specializations && doc.specializations.length > 0
                 ? doc.specializations.map(s => esc(s.name || s)).join(', ')
                 : '—';
-            html += `<tr><td>${doc.id}</td><td>Dr. ${esc(doc.firstName)} ${esc(doc.lastName)}</td><td>${doc.isGP ? 'Yes' : 'No'}</td><td>${specs}</td>`;
+            const name = `Dr. ${esc(doc.firstName)} ${esc(doc.lastName)}`
+                + (doc.pending ? ' <span class="pending-badge">Pending approval</span>' : '');
+            html += `<tr><td>${doc.id}</td><td>${name}</td><td>${doc.isGP ? 'Yes' : 'No'}</td><td>${specs}</td>`;
             if (showActions) {
                 html += `<td>`;
                 // Requirement 3c: list of patients registered with a given GP. Only general
@@ -971,10 +1092,15 @@ function populateVisitSelects(selectedPatientId = null, selectedDoctorId = null)
     });
 
     docSelect.innerHTML = '<option value="">-- Select Doctor --</option>';
-    doctorsList.forEach(d => {
-        const sel = (selectedDoctorId && d.id === selectedDoctorId) ? 'selected' : '';
-        docSelect.innerHTML += `<option value="${d.id}" ${sel}>Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`;
-    });
+    // Applicants nobody has approved are left out: they hold no DOCTOR role, so a visit recorded
+    // against one names an examiner who cannot sign into the system. The doctor already on an
+    // existing visit stays selectable, so editing that visit does not silently repoint it.
+    doctorsList
+        .filter(d => !d.pending || d.id === selectedDoctorId)
+        .forEach(d => {
+            const sel = (selectedDoctorId && d.id === selectedDoctorId) ? 'selected' : '';
+            docSelect.innerHTML += `<option value="${d.id}" ${sel}>Dr. ${esc(d.firstName)} ${esc(d.lastName)}</option>`;
+        });
 
     if (currentUserRole === 'DOCTOR') {
         if (currentDoctorId) {
@@ -1079,7 +1205,7 @@ function renderExistingClinicalData(visit) {
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #1E3A5F; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(d.name)}</span>
                 <span style="white-space: nowrap;">
-                    <button type="button" onclick="editDiagnosis(${d.id})" class="btn-inline-edit" title="Edit diagnosis">✎</button>
+                    <button type="button" onclick="editDiagnosis(${d.id})" class="btn-inline-edit" title="Edit diagnosis">Edit</button>
                     <button type="button" onclick="removeDiagnosis(${d.id})" class="btn-remove" title="Remove diagnosis">✕</button>
                 </span>
             </div>`
@@ -1095,7 +1221,7 @@ function renderExistingClinicalData(visit) {
             `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(16, 185, 129, 0.1); border: 1px solid #065F46; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
                 <span style="color: #E2E8F0;">${esc(p.note)}</span>
                 <span style="white-space: nowrap;">
-                    <button type="button" onclick="editPrescription(${p.id})" class="btn-inline-edit" title="Edit prescription">✎</button>
+                    <button type="button" onclick="editPrescription(${p.id})" class="btn-inline-edit" title="Edit prescription">Edit</button>
                     <button type="button" onclick="removePrescription(${p.id})" class="btn-remove" title="Remove prescription">✕</button>
                 </span>
             </div>`
@@ -1112,7 +1238,7 @@ function renderExistingClinicalData(visit) {
             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(245, 158, 11, 0.1); border: 1px solid #92400E; padding: 0.4rem 0.75rem; border-radius: 8px;">
                 <span style="color: #E2E8F0;">From ${fmtDate(visit.sickLeave.validFrom)} for ${visit.sickLeave.validForDays} days</span>
                 <span style="white-space: nowrap;">
-                    <button type="button" onclick="editSickLeave()" class="btn-inline-edit" title="Edit sick leave">✎</button>
+                    <button type="button" onclick="editSickLeave()" class="btn-inline-edit" title="Edit sick leave">Edit</button>
                     <button type="button" onclick="removeSickLeave(${visit.sickLeave.id})" class="btn-remove" title="Remove sick leave">✕</button>
                 </span>
             </div>`;
@@ -1135,6 +1261,23 @@ function renderSickLeaveFormMode() {
     const editing = editingSickLeaveId !== null;
     button.textContent = editing ? 'Save' : '+ Issue';
     if (cancel) cancel.style.display = editing ? 'inline-block' : 'none';
+}
+
+/**
+ * Closes the clinical-data step, asking first if the visit has no diagnosis.
+ *
+ * WHY a warning and not a rule: the assignment has the doctor give a diagnosis and "евентуално"
+ * prescribe treatment or issue a sick leave — possibly, not necessarily — but it treats the
+ * diagnosis itself as the point of the visit. The live database already holds one visit with none,
+ * recorded through this screen, which is what a silent close produces.
+ */
+function finishVisit() {
+    const noDiagnosis = currentVisitClinicalData
+        && (!currentVisitClinicalData.diagnoses || currentVisitClinicalData.diagnoses.length === 0);
+    if (noDiagnosis && !confirm('This visit has no diagnosis recorded. Close it anyway?')) {
+        return;
+    }
+    closeModal('visitModal');
 }
 
 async function refreshVisitAndRender() {
@@ -1318,7 +1461,10 @@ async function loadDoctorVisits() {
         html += `</tr></thead><tbody>`;
 
         visitsList.forEach(v => {
-            const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : '—';
+            // "No diagnosis" rather than a dash: a visit may legitimately end without one — the
+            // assignment says the doctor "евентуално" prescribes treatment — so the empty cell is a
+            // fact about the visit, not a missing value.
+            const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : 'No diagnosis';
             const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
             const slInfo = v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—';
             html += `<tr><td>${esc(fmtDate(v.visitDate))} ${esc(fmtTime(v.visitTime))}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td><td>${esc(rxNotes)}</td><td>${esc(slInfo)}</td>`;
@@ -1370,6 +1516,7 @@ async function fetchPatientsSeenByDoctor(doctorId) {
 
 async function loadMyPatients() {
     const contentArea = document.getElementById('content-area');
+    patientListOrigin = 'mine';
     contentArea.innerHTML = '<p>Loading your patients...</p>';
     try {
         const docResponse = await fetchWithAuth(`${API_BASE}/doctors/keycloak/${keycloak.tokenParsed.sub}`);
@@ -1481,7 +1628,7 @@ async function loadPatientHistory() {
         } else {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
-                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
+                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : 'No diagnosis';
                 const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
                 const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
@@ -1515,7 +1662,7 @@ async function renderPendingApprovals() {
         return `
             <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
                 <h4 style="color: #F59E0B; margin-bottom: 0.75rem;">Doctors Awaiting Approval (${pending.length})</h4>
-                <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">Approving grants the <strong>DOCTOR</strong> role. GP status is set separately, from the Doctors tab.</p>
+                <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">Approving grants the <strong>DOCTOR</strong> role and offers the edit form, where specializations and GP status are set — an applicant can state neither. Until then they are marked <em>Pending approval</em> in the Doctors directory and are left out of the visit form, the patients' directory and report e.</p>
                 <table class="data-table" style="margin-top: 0.5rem;">
                     <thead><tr><th>Name</th><th>Registered</th><th>Action</th></tr></thead>
                     <tbody>${rows}</tbody>
@@ -1552,7 +1699,7 @@ async function loadFullReportsDashboard() {
                 <h4>Patients with a Given Diagnosis</h4>
                 <p>Everyone who has received a particular diagnosis.</p>
             </div>
-            <div class="report-card" data-group="diagnoses" onclick="fetchReport('/reports/diagnoses/common', 'Times Diagnosed per Condition', ['Diagnosis', 'Times Diagnosed'], r => [r.diagnosisName, r.count])">
+            <div class="report-card" data-group="diagnoses" onclick="fetchReport('/reports/diagnoses/common', 'Times Diagnosed per Condition', ['Diagnosis', 'Times Diagnosed'], r => [r.diagnosisName, r.count], false, null, { unit: 'diagnoses', rank: { valueColumn: 1, labelColumn: 0, lead: 'Most frequently diagnosed' } })">
                 <span class="report-group">b · Diagnoses</span>
                 <h4>Times Diagnosed per Condition</h4>
                 <p>How many times each condition has been diagnosed.</p>
@@ -1587,12 +1734,12 @@ async function loadFullReportsDashboard() {
                 <h4>Visits for a Given Doctor in a Date Range</h4>
                 <p>Visits carried out by a chosen doctor between two dates.</p>
             </div>
-            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/months', 'Sick Leaves Issued per Month', ['Month', 'Sick Leaves Issued'], r => [fmtMonth(r.year, r.month), r.count])">
+            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/months', 'Sick Leaves Issued per Month', ['Month', 'Sick Leaves Issued'], r => [fmtMonth(r.year, r.month), r.count], false, null, { unit: 'months', rank: { valueColumn: 1, labelColumn: 0, lead: 'Month with the most sick leaves' } })">
                 <span class="report-group">i · Sick leaves</span>
                 <h4>Sick Leaves Issued per Month</h4>
                 <p>How many sick leaves were issued in each month.</p>
             </div>
-            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/doctors', 'Sick Leaves Issued per Doctor', ['Doctor ID', 'Doctor Name', 'Sick Leaves Issued'], r => [r.doctorId, 'Dr. '+r.doctorName, r.sickLeaveCount])">
+            <div class="report-card" data-group="sickleaves" onclick="fetchReport('/reports/sickleaves/doctors', 'Sick Leaves Issued per Doctor', ['Doctor ID', 'Doctor Name', 'Sick Leaves Issued'], r => [r.doctorId, 'Dr. '+r.doctorName, r.sickLeaveCount], false, null, { unit: 'doctors', rank: { valueColumn: 2, labelColumn: 1, lead: 'Issued the most sick leaves' } })">
                 <span class="report-group">j · Sick leaves</span>
                 <h4>Sick Leaves Issued per Doctor</h4>
                 <p>How many sick leaves each doctor has issued.</p>
@@ -1616,6 +1763,12 @@ async function renderReportFilterPanel(type) {
     resultsArea.innerHTML = '';
 
     const todayStr = new Date().toISOString().split('T')[0];
+    // TEST_PLAN §4.3g runs these reports over "the last 12 months", so that is the default range.
+    // It used to be the literal 2026-01-01, which stops meaning "a year back" the moment the year
+    // turns and silently narrows or widens what the report covers.
+    const yearAgo = new Date();
+    yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+    const yearAgoStr = yearAgo.toISOString().split('T')[0];
 
     if (type === 'diagnosis') {
         // Fetch actual diagnosis names from the database
@@ -1650,7 +1803,7 @@ async function renderReportFilterPanel(type) {
                 <div class="filter-row">
                     <div>
                         <label for="inlineStartDate">Start Date:</label>
-                        <input type="date" id="inlineStartDate" value="2026-01-01" class="filter-input">
+                        <input type="date" id="inlineStartDate" value="${yearAgoStr}" class="filter-input">
                     </div>
                     <div>
                         <label for="inlineEndDate">End Date:</label>
@@ -1674,7 +1827,7 @@ async function renderReportFilterPanel(type) {
                     </div>
                     <div>
                         <label for="inlineStartDate">Start Date:</label>
-                        <input type="date" id="inlineStartDate" value="2026-01-01" class="filter-input">
+                        <input type="date" id="inlineStartDate" value="${yearAgoStr}" class="filter-input">
                     </div>
                     <div>
                         <label for="inlineEndDate">End Date:</label>
@@ -1726,7 +1879,9 @@ async function renderReportFilterPanel(type) {
 
 function runDiagnosisReport() {
     const diag = document.getElementById('inlineDiagSelect').value;
-    fetchReport(`/reports/diagnoses/patients?diagnosis=${encodeURIComponent(diag)}`, `Patients diagnosed with: ${diag}`, ['ID', 'Patient Name', 'EGN', 'GP'], p => [p.id, p.firstName + ' ' + p.lastName, p.egn, p.gpDoctorName || '—'], true);
+    // §3a asks for "обобщени данни за броя на пациентите с дадена диагноза" — the *number* of
+    // patients with a given diagnosis, which a list of names contains but never states.
+    fetchReport(`/reports/diagnoses/patients?diagnosis=${encodeURIComponent(diag)}`, `Patients diagnosed with: ${diag}`, ['ID', 'Patient Name', 'EGN', 'GP'], p => [p.id, p.firstName + ' ' + p.lastName, p.egn, p.gpDoctorName || '—'], true, null, { unit: 'patients' });
 }
 
 /** Report c — the patients registered with one general practitioner. */
@@ -1777,7 +1932,7 @@ function runPatientVisitsReport() {
         v.id,
         fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime),
         'Dr. ' + v.doctorName,
-        (v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d=>d.name).join(', ') : '—'),
+        (v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d=>d.name).join(', ') : 'No diagnosis'),
         (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—'),
         (v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—')
     ], true);
@@ -1844,7 +1999,34 @@ function exportCurrentReport() {
     URL.revokeObjectURL(url);
 }
 
-async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel = false, rowFilter = null) {
+/**
+ * Which rows share the highest value in the ranked column — all of them, not the first.
+ * Returns an empty set when the report is not ranked or the column holds nothing numeric, so a
+ * malformed rank option degrades to a plain table rather than to a wrong answer.
+ */
+function topRowIndexes(rows, rank) {
+    const leaders = new Set();
+    if (!rank) return leaders;
+    const values = rows.map(r => Number(r[rank.valueColumn]));
+    const best = Math.max(...values.filter(v => Number.isFinite(v)), -Infinity);
+    if (!Number.isFinite(best)) return leaders;
+    values.forEach((v, i) => { if (v === best) leaders.add(i); });
+    return leaders;
+}
+
+/**
+ * Runs a report and renders it.
+ *
+ * @param options optional presentation, for the clauses that ask a question rather than for a list:
+ *   - {@code unit} — the plural noun for the row count printed above the table ("patients",
+ *     "sick leaves"). The assignment asks card a for "броя на пациентите" — the *number* of
+ *     patients — which a list of names does not state, so every report states its count.
+ *   - {@code rank} — {@code { valueColumn, labelColumn, lead }}. Clauses b, i and j ask which
+ *     diagnosis, month or doctor comes top, and write it "диагнозата/диагнозите" — the slash
+ *     anticipating a tie. A ranked table contains the answer without giving it, so this names every
+ *     row tied for the highest value and highlights them.
+ */
+async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel = false, rowFilter = null, options = {}) {
     const filterPanel = document.getElementById('report-filter-panel');
     if (!keepFilterPanel && filterPanel) {
         filterPanel.innerHTML = '';
@@ -1871,6 +2053,14 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
         if (rows.length === 0) {
             html += '<p class="muted-label">No records found for this report.</p>';
         } else {
+            const leaders = topRowIndexes(rows, options.rank);
+            html += `<p class="muted-label">${rows.length} ${esc(options.unit || 'rows')}</p>`;
+            if (leaders.size > 0) {
+                const { valueColumn, labelColumn, lead } = options.rank;
+                const names = [...leaders].map(i => String(rows[i][labelColumn])).join(', ');
+                const value = rows[[...leaders][0]][valueColumn];
+                html += `<p class="report-answer">${esc(lead)}: <strong>${esc(names)}</strong> (${esc(String(value))})</p>`;
+            }
             html += `<div style="display:flex; justify-content:flex-end; margin-bottom:0.5rem;">
                         <button class="btn btn-secondary" style="padding:0.3rem 0.9rem; font-size:0.8rem;"
                                 onclick="exportCurrentReport()">Export CSV</button>
@@ -1879,8 +2069,8 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
             headers.forEach((h, i) => html += `<th onclick="sortTable(${i}, this)">${esc(h)}</th>`);
             html += '</tr></thead><tbody>';
 
-            rows.forEach(rowData => {
-                html += '<tr>';
+            rows.forEach((rowData, i) => {
+                html += leaders.has(i) ? '<tr class="report-top">' : '<tr>';
                 rowData.forEach(cell => html += `<td>${esc(cell)}</td>`);
                 html += '</tr>';
             });
@@ -1916,12 +2106,24 @@ function filterTable() {
 }
 
 let sortDirections = {};
+let sortTableSeq = 0;
+
+/**
+ * Sorts one table by a column, alternating direction on repeated clicks.
+ *
+ * The direction is keyed by table *and* column. Keying it by column index alone meant sorting
+ * column 0 of one table left the next table's first click starting descending, because both shared
+ * the key "0" — and several screens show more than one table.
+ */
 function sortTable(columnIndex, thElement) {
     const table = thElement.closest('table');
     const tbody = table.querySelector('tbody');
     const rows = Array.from(tbody.querySelectorAll('tr'));
 
-    const key = `${columnIndex}`;
+    if (!table.dataset.sortKey) {
+        table.dataset.sortKey = `t${++sortTableSeq}`;
+    }
+    const key = `${table.dataset.sortKey}:${columnIndex}`;
     const ascending = !sortDirections[key];
     sortDirections[key] = ascending;
 
@@ -1942,14 +2144,33 @@ function sortTable(columnIndex, thElement) {
 
 // ================= CSV EXPORT HELPER =================
 // ================= AUDIT LOGS =================
+const AUDIT_PAGE_SIZE = 50;
+
+/**
+ * One page of the audit feed.
+ *
+ * WHY this screen pages at the database while the reports do not: the log grows with every action
+ * — twenty-three call sites write to it and the seed contains none — so it is the one list with no
+ * natural end. The reports answer a question and must answer it in full.
+ *
+ * Searching is the header box, which filters the rows on the page rather than querying the
+ * database. That is a deliberate limit at this size: it searches the 50 entries on screen, and
+ * Prev / Next reach the rest.
+ */
 async function loadAuditLogs(page = 0) {
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = '<p>Loading audit logs...</p>';
     try {
-        const res = await fetchWithAuth(`${API_BASE}/audit-logs?page=${page}&size=50`);
+        const res = await fetchWithAuth(`${API_BASE}/audit-logs?page=${page}&size=${AUDIT_PAGE_SIZE}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const pageData = await res.json();
         const logs = pageData.content || [];
+        // VIA_DTO page metadata (see WebConfig). Defaulted so a shape change degrades to one page
+        // rather than to a broken screen.
+        const meta = pageData.page || {};
+        const pageNumber = meta.number ?? page;
+        const totalPages = meta.totalPages ?? 1;
+        const totalElements = meta.totalElements ?? logs.length;
 
         let html = '<h3>System Audit Logs</h3>';
 
@@ -1968,11 +2189,23 @@ async function loadAuditLogs(page = 0) {
                 html += `<tr><td>${esc(dateStr)}</td><td><span class="role-badge">${esc(l.action)}</span></td><td>${esc(l.entityType)}</td><td>${record}</td><td>${esc(l.actor)}</td></tr>`;
             });
             html += '</tbody></table>';
+            html += renderAuditPager(pageNumber, totalPages, totalElements);
         }
         contentArea.innerHTML = html;
     } catch (e) {
         contentArea.innerHTML = `<p class="error-text">Error loading audit logs: ${esc(e.message)}</p>`;
     }
+}
+
+/** Prev / Next plus where in the feed the reader is. Sorting only reorders the page on screen. */
+function renderAuditPager(pageNumber, totalPages, totalElements) {
+    const first = pageNumber <= 0;
+    const last = pageNumber >= totalPages - 1;
+    return `<div class="pager">
+        <button type="button" class="btn btn-secondary" onclick="loadAuditLogs(${pageNumber - 1})" ${first ? 'disabled' : ''}>← Prev</button>
+        <span class="muted-label">Page ${pageNumber + 1} of ${totalPages} · ${totalElements} entries</span>
+        <button type="button" class="btn btn-secondary" onclick="loadAuditLogs(${pageNumber + 1})" ${last ? 'disabled' : ''}>Next →</button>
+    </div>`;
 }
 
 // ================= GP ASSIGNMENT =================
@@ -2031,7 +2264,10 @@ function snapCoverageToFirstOfMonth(input) {
 
 function openRecordInsuranceModal(patientId) {
     document.getElementById('insurancePatientId').value = patientId;
+    document.getElementById('insurancePaymentId').value = '';
     document.getElementById('insurancePatientName').value = patientNameById(patientId);
+    document.getElementById('insuranceModalTitle').textContent = 'Record Health Insurance Payment';
+    document.getElementById('insuranceSubmitBtn').textContent = 'Record Payment';
     const today = new Date().toISOString().split('T')[0];
     // The coverage field identifies a month, not a day: the server normalises whatever is picked to
     // the first of that month, so defaulting to the 1st keeps the form showing what gets stored.
@@ -2041,26 +2277,128 @@ function openRecordInsuranceModal(patientId) {
     openModal('insuranceModal');
 }
 
+/**
+ * The same form, correcting a payment already recorded.
+ * WHY correcting matters: one payment per covered month is a rule, so a payment entered against the
+ * wrong month occupies that month and reports the patient as covered for it. Before this the only
+ * record of it was the month it wrongly filled.
+ */
+function openEditInsuranceModal(patientId, paymentId) {
+    const payment = insurancePaymentsOnScreen.find(p => p.id === paymentId);
+    if (!payment) return;
+    document.getElementById('insurancePatientId').value = patientId;
+    document.getElementById('insurancePaymentId').value = paymentId;
+    document.getElementById('insurancePatientName').value = patientNameById(patientId);
+    document.getElementById('insuranceModalTitle').textContent = 'Correct Recorded Payment';
+    document.getElementById('insuranceSubmitBtn').textContent = 'Save Correction';
+    document.getElementById('insuranceDate').value = payment.insuranceDate;
+    document.getElementById('insurancePaidOn').value = payment.paidOn;
+    openModal('insuranceModal');
+}
+
 async function submitInsurancePayment(e) {
     e.preventDefault();
     const patientId = Number(document.getElementById('insurancePatientId').value);
+    const paymentId = document.getElementById('insurancePaymentId').value;
     const insuranceDate = document.getElementById('insuranceDate').value;
     const paidOn = document.getElementById('insurancePaidOn').value;
+    const correcting = paymentId !== '';
 
     try {
-        const res = await fetchWithAuth(`${API_BASE}/patients/${patientId}/insurance`, {
-            method: 'POST',
-            // patientId travels in the path, not the body.
-            body: JSON.stringify({ insuranceDate, paidOn })
-        });
+        const res = await fetchWithAuth(
+            correcting
+                ? `${API_BASE}/patients/${patientId}/insurance/payments/${paymentId}`
+                : `${API_BASE}/patients/${patientId}/insurance`, {
+                method: correcting ? 'PUT' : 'POST',
+                // patientId travels in the path, not the body.
+                body: JSON.stringify({ insuranceDate, paidOn })
+            });
         if (!res.ok) {
-            throw new Error(await apiErrorMessage(res, 'Failed to record payment'));
+            throw new Error(await apiErrorMessage(res, correcting ? 'Failed to correct payment' : 'Failed to record payment'));
         }
         closeModal('insuranceModal');
-        alert('Insurance payment recorded successfully!');
-        loadAllPatients();
+        alert(correcting ? 'Payment corrected.' : 'Insurance payment recorded successfully!');
+        // Stay where the user was: the management screen if that is what opened the form.
+        if (managingInsuranceForPatientId === patientId) {
+            await manageInsurance(patientId);
+        } else {
+            loadAllPatients();
+        }
     } catch (err) {
-        alert('Failed to record payment: ' + err.message);
+        alert((correcting ? 'Failed to correct payment: ' : 'Failed to record payment: ') + err.message);
+    }
+}
+
+// ================= INSURANCE MANAGEMENT =================
+
+/** The payments currently rendered, so the edit form can prefill without a second request. */
+let insurancePaymentsOnScreen = [];
+let managingInsuranceForPatientId = null;
+
+/**
+ * Everything recorded for one patient's health insurance, and the controls to correct it.
+ *
+ * WHY a screen rather than a second modal: the specification gives administrators the right to see
+ * and edit all information, and until now contributions could only be written. The verdict alone
+ * cannot show which month is wrong — only the individual payments can.
+ */
+async function manageInsurance(patientId) {
+    const contentArea = document.getElementById('content-area');
+    managingInsuranceForPatientId = patientId;
+    contentArea.innerHTML = '<p>Loading insurance record...</p>';
+    try {
+        const [paymentsRes, statusRes] = await Promise.all([
+            fetchWithAuth(`${API_BASE}/patients/${patientId}/insurance/payments`),
+            fetchWithAuth(`${API_BASE}/patients/${patientId}/insurance`)
+        ]);
+        if (!paymentsRes.ok) throw new Error(`HTTP ${paymentsRes.status}`);
+        insurancePaymentsOnScreen = await paymentsRes.json();
+        const status = statusRes.ok ? await statusRes.json() : null;
+
+        const name = patientNameById(patientId);
+        let html = `<h3>Health Insurance — ${esc(name)}</h3>`;
+        if (status) {
+            html += `<p>${insuranceCell(status)}</p>`;
+            if (status.unpaidMonths && status.unpaidMonths.length > 0) {
+                html += `<p class="muted-label">Unpaid in the last six months: `
+                     + status.unpaidMonths.map(m => esc(fmtMonth(m.year, m.month))).join(', ') + '</p>';
+            }
+        }
+        html += `<button class="btn btn-primary btn-add-new" onclick="openRecordInsuranceModal(${patientId})">+ Record Payment</button> `;
+        html += `<button class="btn btn-secondary btn-add-new" onclick="loadAllPatients()">← Back to Patients</button>`;
+
+        if (insurancePaymentsOnScreen.length === 0) {
+            html += '<p class="muted-label">No contributions recorded for this patient.</p>';
+        } else {
+            html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Covered Month</th>'
+                 + '<th onclick="sortTable(1, this)">Paid On</th><th>Actions</th></tr></thead><tbody>';
+            insurancePaymentsOnScreen.forEach(p => {
+                const [year, month] = p.insuranceDate.split('-');
+                html += `<tr><td>${esc(fmtMonth(Number(year), Number(month)))}</td>`
+                     + `<td>${esc(fmtDate(p.paidOn))}</td>`
+                     + `<td><button class="action-btn btn-edit" onclick="openEditInsuranceModal(${patientId}, ${p.id})">Edit</button> `
+                     + `<button class="action-btn btn-delete" onclick="deleteInsurancePayment(${patientId}, ${p.id})">Delete</button></td></tr>`;
+            });
+            html += '</tbody></table>';
+        }
+        contentArea.innerHTML = html;
+    } catch (err) {
+        contentArea.innerHTML = `<p class="error-text">Error loading insurance record: ${esc(err.message)}</p>`;
+    }
+}
+
+async function deleteInsurancePayment(patientId, paymentId) {
+    const payment = insurancePaymentsOnScreen.find(p => p.id === paymentId);
+    const [year, month] = payment ? payment.insuranceDate.split('-') : [];
+    const label = payment ? fmtMonth(Number(year), Number(month)) : `payment ${paymentId}`;
+    if (!confirm(`Remove the contribution covering ${label}? The month becomes unpaid again.`)) return;
+    try {
+        const res = await fetchWithAuth(
+            `${API_BASE}/patients/${patientId}/insurance/payments/${paymentId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to remove payment'));
+        await manageInsurance(patientId);
+    } catch (err) {
+        alert(err.message);
     }
 }
 
@@ -2068,6 +2406,10 @@ async function submitInsurancePayment(e) {
 /**
  * Grants a self-registered doctor the DOCTOR role, then refreshes the dashboard so the
  * approved entry disappears from the pending banner.
+ *
+ * Approval takes no specializations and no GP status — the applicant cannot state either — so it
+ * offers the edit form straight afterwards, which is where both are set. Declining leaves an
+ * approved doctor with no specialization, which is valid, not broken.
  */
 async function approveDoctor(doctorId) {
     if (!confirm('Approve this doctor and grant them the DOCTOR role?')) return;
@@ -2077,6 +2419,10 @@ async function approveDoctor(doctorId) {
             throw new Error(await apiErrorMessage(res, `HTTP ${res.status}`));
         }
         await loadFullReportsDashboard();
+        if (confirm('Approved. Set their specializations and GP status now?')) {
+            await fetchDoctorsList();
+            await editDoctor(doctorId);
+        }
     } catch (err) {
         alert('Could not approve doctor: ' + err.message);
     }
@@ -2128,7 +2474,7 @@ async function viewPatientVisitsDirect(patientId) {
 
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
             <h3>Visits for Patient: ${esc(patientName)}</h3>
-            <button class="btn btn-secondary" onclick="loadAllPatients()">← Back to Patients</button>
+            <button class="btn btn-secondary" onclick="backToPatientList()">← Back to Patients</button>
         </div>`;
 
         if (visits.length === 0) {
@@ -2136,7 +2482,7 @@ async function viewPatientVisitsDirect(patientId) {
         } else {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
-                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : '—';
+                const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : 'No diagnosis';
                 const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
                 const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;

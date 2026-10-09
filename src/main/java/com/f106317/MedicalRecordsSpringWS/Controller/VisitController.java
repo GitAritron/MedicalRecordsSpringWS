@@ -12,12 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * REST Controller for managing Medical Visits, Diagnoses, Prescriptions, and Sick Leaves.
- * WHAT: Exposes API endpoints for the core clinical workflows of the system.
- * WHY: Doctors use these endpoints to document patient examinations and issue sick leaves.
- * Patients use read-only endpoints to securely view their medical history.
- */
+// CRUD for visits, diagnoses, prescriptions, and sick leaves.
 @RestController
 @RequestMapping("/api/visits")
 @RequiredArgsConstructor
@@ -62,10 +57,6 @@ public class VisitController {
         return ResponseEntity.ok(visitService.getVisitsByPatient(patientId, authentication));
     }
 
-    /**
-     * Adds a diagnosis to a visit.
-     * WHY: Fulfills the requirement "When a patient visits a doctor, he diagnoses him".
-     */
     @PostMapping("/diagnosis")
     @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR')")
     public ResponseEntity<DiagnosisResponse> addDiagnosis(@Valid @RequestBody DiagnosisRequest request, Authentication authentication) {
@@ -97,10 +88,6 @@ public class VisitController {
         return new ResponseEntity<>(visitService.createPrescription(request, authentication), HttpStatus.CREATED);
     }
 
-    /**
-     * Issues a sick leave for a visit.
-     * WHY: Fulfills requirement "eventually issues a sick note for a certain number of days from a certain date".
-     */
     @PostMapping("/sickleave")
     @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR')")
     public ResponseEntity<SickLeaveResponse> addSickLeave(@Valid @RequestBody SickLeaveRequest request, Authentication authentication) {

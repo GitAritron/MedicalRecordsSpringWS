@@ -18,7 +18,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/reports")
@@ -35,13 +34,7 @@ public class ReportController {
         return ResponseEntity.ok(visitService.getMostCommonDiagnoses());
     }
 
-    /**
-     * Health-insurance standing for every patient.
-     * WHY it belongs to staff rather than only the patient's own dashboard: the specification asks
-     * that the system "прави справка дали са си платили здравните осигуровки през последните 6
-     * месеца" without saying the patient is the only one who may read it — and a doctor deciding
-     * whether a visit is covered is exactly who needs to.
-     */
+    // Insurance status for all patients - used by staff to check coverage.
     @GetMapping("/patients/insurance")
     public ResponseEntity<List<ReportDTO.PatientInsuranceStatus>> getPatientInsuranceStatus() {
         return ResponseEntity.ok(insuranceService.getStatusForAllPatients());
@@ -52,11 +45,7 @@ public class ReportController {
         return ResponseEntity.ok(visitService.getDistinctDiagnosisNames());
     }
 
-    /**
-     * Doctors awaiting approval. Delegates to DoctorService: deciding what "pending" means is
-     * domain logic, and the previous inline filter matched CREATE — the action an administrator's
-     * own doctor creation writes — so it listed the wrong doctors and never emptied.
-     */
+    // Doctors awaiting admin approval.
     @GetMapping("/pending-registrations")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<PendingDoctorResponse>> getPendingRegistrations() {
@@ -106,15 +95,6 @@ public class ReportController {
 
     @GetMapping("/visits/patients")
     public ResponseEntity<List<VisitResponse>> getVisitsByAllPatients() {
-        List<VisitResponse> sorted = visitService.getAllVisits().stream()
-                .sorted((a, b) -> {
-                    int patientCmp = a.patientName().compareToIgnoreCase(b.patientName());
-                    if (patientCmp != 0) {
-                        return patientCmp;
-                    }
-                    return a.visitDate().compareTo(b.visitDate());
-                })
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(sorted);
+        return ResponseEntity.ok(visitService.getAllVisitsOrderedByPatient());
     }
 }

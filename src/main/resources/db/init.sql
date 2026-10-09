@@ -101,5 +101,4 @@ CREATE INDEX idx_visit_date ON visit(visit_date);
 CREATE INDEX idx_diagnosis_name ON diagnosis(name);
 CREATE INDEX idx_sl_valid_from ON sick_leave(valid_from);
 CREATE INDEX idx_al_entity ON audit_log(entity_type, entity_id);
-CREATE INDEX idx_al_actor ON audit_log(actor);
 CREATE INDEX idx_al_created ON audit_log(created_at);

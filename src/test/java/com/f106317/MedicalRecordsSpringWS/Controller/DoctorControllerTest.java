@@ -63,7 +63,7 @@ class DoctorControllerTest {
         when(doctorService.getDoctorById(any())).thenReturn(sampleDoctor);
     }
 
-    private final DoctorResponse sampleDoctor = new DoctorResponse(1L, "kc-id-123", "John", "Doe", true, List.of(), null);
+    private final DoctorResponse sampleDoctor = new DoctorResponse(1L, "kc-id-123", "John", "Doe", true, List.of(), null, false);
 
     /** Verifies GET /api/doctors returns a list of doctors for ADMIN users. */
     @Test

@@ -5,7 +5,6 @@ import com.f106317.MedicalRecordsSpringWS.Data.Entity.Visit;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public record VisitResponse(
         Long id,
@@ -23,13 +22,13 @@ public record VisitResponse(
         List<DiagnosisResponse> diagnosisList = visit.getDiagnoses() != null
                 ? visit.getDiagnoses().stream()
                     .map(DiagnosisResponse::fromEntity)
-                    .collect(Collectors.toList())
+                    .toList()
                 : List.of();
 
         List<PrescriptionResponse> prescriptionList = visit.getPrescriptions() != null
                 ? visit.getPrescriptions().stream()
                     .map(PrescriptionResponse::fromEntity)
-                    .collect(Collectors.toList())
+                    .toList()
                 : List.of();
 
         SickLeaveResponse sickLeaveResp = visit.getSickLeave() != null

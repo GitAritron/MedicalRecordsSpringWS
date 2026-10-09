@@ -1,31 +1,14 @@
 package com.f106317.MedicalRecordsSpringWS.DTO;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
-import java.util.Set;
-
-/**
- * Self-registration payload for a doctor applying for an account.
- * WHAT: Carries only the fields an applicant may state about themselves.
- * WHY: Omits keycloakId (taken from the verified JWT) and isGP. GP status decides whether a doctor
- * appears in the GP directory patients choose from, so only an administrator may grant it.
- */
+// No keycloakId (taken from verified JWT) and no isGP (admin decides that).
 public record DoctorSelfRegistrationRequest(
         @NotBlank(message = "First name is required")
         @Size(max = 100, message = "First name cannot exceed 100 characters")
         String firstName,
         @NotBlank(message = "Last name is required")
         @Size(max = 100, message = "Last name cannot exceed 100 characters")
-        String lastName,
-        /**
-         * API-only, and empty in practice. The registration form does not offer specializations —
-         * it always sends {@code []} — because an administrator sets them when approving the
-         * applicant, which is the same step that grants the DOCTOR role. The field stays because
-         * the service applies any non-empty set, so a caller who does know its specializations can
-         * state them; {@code @NotNull} keeps "absent" from being a third case alongside empty.
-         */
-        @NotNull(message = "Specialization IDs are required")
-        Set<Long> specializationIds
+        String lastName
 ) {}

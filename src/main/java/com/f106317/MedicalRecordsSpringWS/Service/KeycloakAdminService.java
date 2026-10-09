@@ -19,13 +19,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Service for managing Keycloak users and realm roles via the Admin REST API.
- * WHAT: Creates accounts, assigns and revokes realm roles, and resets passwords.
- * WHY: An administrator entering a patient or doctor record needs to give that person portal
- * access without leaving the application for the Keycloak console, and the reverse — revoking a
- * role when a record is deleted or re-linked — is what stops the two systems drifting apart.
- */
+// Manages Keycloak users and roles via the Admin REST API.
 @Service
 @Slf4j
 public class KeycloakAdminService {
@@ -45,17 +39,14 @@ public class KeycloakAdminService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /** Characters for generated passwords: unambiguous, and covering Keycloak's default policy. */
+    // Unambiguous chars covering Keycloak's default password policy.
     private static final String PASSWORD_ALPHABET =
             "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     private static final int PASSWORD_LENGTH = 12;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     public KeycloakAdminService() {
-        // JDK HttpClient rather than SimpleClientHttpRequestFactory: revoking a realm role is a
-        // DELETE that carries the role representation in its body, and HttpURLConnection refuses to
-        // write one ("HTTP method DELETE doesn't support output"). This factory has no such limit
-        // and needs no dependency beyond spring-web.
+        // JDK HttpClient needed because HttpURLConnection can't send a body with DELETE.
         var httpClient = java.net.http.HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
@@ -64,30 +55,15 @@ public class KeycloakAdminService {
         this.restTemplate = new RestTemplate(factory);
     }
 
-    /**
-     * Assigns a realm-level role to a Keycloak user.
-     * @param userId The Keycloak user UUID (from JWT 'sub' claim)
-     * @param roleName The role name to assign (e.g., "PATIENT")
-     */
     public void assignRealmRole(String userId, String roleName) {
         changeRealmRoleMapping(userId, roleName, HttpMethod.POST, "assign");
     }
 
-    /**
-     * Removes a realm-level role from a Keycloak user.
-     * WHY it exists: without it the application only ever grants. Deleting a clinical record or
-     * pointing it at a different account would leave the previous holder still carrying the role —
-     * and a stale DOCTOR role keeps full read access to every patient, visit and report through the
-     * API, because the front-end orphan check is presentation, not enforcement.
-     */
+    // Without this, deleting a record leaves the user with a stale role that still has API access.
     public void removeRealmRole(String userId, String roleName) {
         changeRealmRoleMapping(userId, roleName, HttpMethod.DELETE, "remove");
     }
 
-    /**
-     * Adds or removes one realm role mapping. Both directions hit the same endpoint with the same
-     * body — an array holding the role representation — and differ only in HTTP method.
-     */
     private void changeRealmRoleMapping(String userId, String roleName, HttpMethod method, String verb) {
         try {
             String adminToken = getAdminToken();
@@ -116,7 +92,6 @@ public class KeycloakAdminService {
         }
     }
 
-    /** Reads one realm role as raw JSON, for use as the body of a role-mapping call. */
     private String fetchRoleRepresentation(String adminToken, String roleName) {
         String roleUrl = serverUrl + "/admin/realms/" + realm + "/roles/" + roleName;
         HttpHeaders headers = new HttpHeaders();
@@ -131,31 +106,13 @@ public class KeycloakAdminService {
         return response.getBody();
     }
 
-    /**
-     * Creates an enabled Keycloak account whose password must be changed at first sign-in.
-     * WHAT: posts a user with a {@code temporary} credential and returns the new user's UUID.
-     * WHY temporary: it is what makes Keycloak force UPDATE_PASSWORD on first login, so an
-     * administrator can hand over a one-time password and never learns the person's real one.
-     * Core Keycloak has no admin endpoint returning a single-use magic link — those are delivered
-     * by e-mail and need SMTP — so a temporary credential is the supported way to do this.
-     *
-     * <p>
-     * WHY no email: this realm has no SMTP server, {@code resetPasswordAllowed} is false and
-     * {@code verifyEmail} is false, so an address set here could never be read back, mailed to, or
-     * used to recover an account. It would be a write-only attribute, and a field that looks like it
-     * does something while doing nothing is worse than no field. Administrators who want addresses
-     * on accounts can set them in the Keycloak console.
-     *
-     * @return the UUID Keycloak assigned, read from the {@code Location} response header
-     * @throws UsernameAlreadyExistsException if the realm already has that username
-     */
+    // Creates a Keycloak user with a temporary password (must change on first login). Returns the new user's UUID.
     public String createUser(String username, String firstName, String lastName,
                              String temporaryPassword) {
         try {
             String adminToken = getAdminToken();
 
-            // Built through Jackson rather than string concatenation: every value here is
-            // administrator input and would otherwise be an injection point into the request body.
+            // Built through Jackson to avoid injection in the JSON body.
             Map<String, Object> credential = Map.of(
                     "type", "password", "value", temporaryPassword, "temporary", true);
             Map<String, Object> user = new java.util.LinkedHashMap<>();
@@ -201,11 +158,6 @@ public class KeycloakAdminService {
         }
     }
 
-    /**
-     * Replaces a user's password with a temporary one they must change at next sign-in.
-     * WHY: the generated password is shown to the administrator once and never stored, so losing it
-     * before passing it on would otherwise mean a trip to the Keycloak console.
-     */
     public void resetPassword(String userId, String temporaryPassword) {
         try {
             String adminToken = getAdminToken();
@@ -236,13 +188,7 @@ public class KeycloakAdminService {
         }
     }
 
-    /**
-     * Reads the username of an existing account.
-     * WHY it must be asked of Keycloak: the username lives there and nowhere else — this
-     * application stores only the account's UUID. An administrator re-issuing a password needs the
-     * name the person actually types at the sign-in screen, which is neither the UUID nor the name
-     * on their medical record.
-     */
+    // Username lives only in Keycloak - we store only the UUID.
     public String getUsername(String userId) {
         try {
             String adminToken = getAdminToken();
@@ -271,7 +217,6 @@ public class KeycloakAdminService {
         }
     }
 
-    /** A random password for a brand-new or reset account; the holder must change it immediately. */
     public String generateTemporaryPassword() {
         StringBuilder password = new StringBuilder(PASSWORD_LENGTH);
         for (int i = 0; i < PASSWORD_LENGTH; i++) {

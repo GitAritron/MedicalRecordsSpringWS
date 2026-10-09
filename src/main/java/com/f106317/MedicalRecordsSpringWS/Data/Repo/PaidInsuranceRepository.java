@@ -12,25 +12,17 @@ import java.util.List;
 @Repository
 public interface PaidInsuranceRepository extends JpaRepository<PaidInsurance, Long> {
 
-    /**
-     * Whether this patient already has a payment recorded for a covered month.
-     * <p>
-     * WHY it takes a date rather than a month: {@code insuranceDate} is normalised to the first of
-     * the covered month before it is stored, so the first of the month <em>is</em> the month key.
-     * The caller normalises, then asks. {@code uq_patient_insurance_date} enforces the same rule at
-     * the database, for the race this check cannot cover.
-     */
+    // Checked before recording a payment. Normalised to 1st of month = month key.
     boolean existsByPatientIdAndInsuranceDate(Long patientId, LocalDate insuranceDate);
 
+    // Same lookup but returns the row - needed when correcting a payment (doesn't conflict with itself).
+    java.util.Optional<PaidInsurance> findByPatientIdAndInsuranceDate(Long patientId, LocalDate insuranceDate);
 
-    /**
-     * Which months one patient has paid for, as sortable {@code year * 100 + month} keys.
-     * <p>
-     * WHY the months rather than a count: a count says how many of the six were paid, not whether
-     * they run unbroken back from today. Someone who paid five months and then stopped is not
-     * currently insured, but counts the same as someone who missed only the oldest month. The
-     * caller walks the keys backwards from the current month to find the unbroken run.
-     */
+    // Individual payments for correction view.
+    List<PaidInsurance> findByPatientIdOrderByInsuranceDateDesc(Long patientId);
+
+
+    // Returns covered months as year*100+month keys. Caller walks backwards to find the unbroken run.
     @Query("""
             SELECT DISTINCT YEAR(p.insuranceDate) * 100 + MONTH(p.insuranceDate)
             FROM PaidInsurance p
@@ -42,11 +34,7 @@ public interface PaidInsuranceRepository extends JpaRepository<PaidInsurance, Lo
                                        @Param("windowStart") LocalDate windowStart,
                                        @Param("windowEnd") LocalDate windowEnd);
 
-    /**
-     * The same months for every patient who has paid anything inside the window, in one query.
-     * Patients with no payments are absent from the result; the caller folds them back in at zero
-     * rather than joining them here.
-     */
+    // Same as above but for all patients in one query. Patients with no payments are absent.
     @Query("""
             SELECT DISTINCT p.patient.id, YEAR(p.insuranceDate) * 100 + MONTH(p.insuranceDate)
             FROM PaidInsurance p

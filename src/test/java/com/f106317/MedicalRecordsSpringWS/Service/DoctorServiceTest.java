@@ -4,6 +4,7 @@ import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
 import com.f106317.MedicalRecordsSpringWS.TestAuth;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.AuditLog;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.Doctor;
+import com.f106317.MedicalRecordsSpringWS.Data.Entity.Specialization;
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorSelfRegistrationRequest;
@@ -361,6 +362,121 @@ class DoctorServiceTest {
         when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         assertEquals("kc-existing", doctorService.updateDoctor(1L, request, TestAuth.admin()).keycloakId());
+    }
+
+    /**
+     * J1 regression: editing a pending applicant activated them without recording the approval.
+     *
+     * The controller grants the DOCTOR role on every save, and the README's workflow is to approve
+     * an applicant by editing them — that is the only step that can add specializations, which the
+     * Approve button does not take. So Edit → Save made a pending applicant active while the
+     * pending banner kept listing them, because "pending" is SELF_REGISTER minus APPROVE_DOCTOR and
+     * nothing had written the second. The approval must be recorded wherever the role is granted.
+     */
+    @Test
+    void updateDoctor_whenApplicantIsPending_recordsTheApproval() {
+        doctor.setKeycloakId("kc-applicant");
+        DoctorRequest request = new DoctorRequest(null, "Jane", "Smith", false, Set.of(), null);
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(auditLogService.findPendingDoctorIds()).thenReturn(Set.of(1L));
+
+        DoctorResponse response = doctorService.updateDoctor(1L, request, TestAuth.admin());
+
+        verify(auditLogService).log(any(), eq(AuditLogService.ACTION_APPROVE_DOCTOR),
+                eq(AuditLogService.ENTITY_DOCTOR), eq(1L), any());
+        assertFalse(response.pending(), "the applicant is approved by this save");
+    }
+
+    /** An ordinary edit of an already-approved doctor must not write a second approval. */
+    @Test
+    void updateDoctor_whenAlreadyApproved_recordsOnlyTheUpdate() {
+        doctor.setKeycloakId("kc-existing");
+        DoctorRequest request = new DoctorRequest(null, "Jane", "Smith", false, Set.of(), null);
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(auditLogService.findPendingDoctorIds()).thenReturn(Set.of());
+
+        doctorService.updateDoctor(1L, request, TestAuth.admin());
+
+        verify(auditLogService, never()).log(any(), eq(AuditLogService.ACTION_APPROVE_DOCTOR),
+                any(), any(), any());
+    }
+
+    /**
+     * A record with no Keycloak account cannot be approved — there is nothing to grant the role to,
+     * which is what approveDoctor refuses outright. Saving one must not claim otherwise.
+     */
+    @Test
+    void updateDoctor_pendingWithNoAccount_staysPending() {
+        doctor.setKeycloakId(null);
+        DoctorRequest request = new DoctorRequest(null, "Jane", "Smith", false, Set.of(), null);
+        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(auditLogService.findPendingDoctorIds()).thenReturn(Set.of(1L));
+
+        assertTrue(doctorService.updateDoctor(1L, request, TestAuth.admin()).pending());
+        verify(auditLogService, never()).log(any(), eq(AuditLogService.ACTION_APPROVE_DOCTOR),
+                any(), any(), any());
+    }
+
+    /**
+     * Deleting a specialization takes it off every doctor holding it rather than being refused.
+     *
+     * WHY that is the right choice: the specialization most likely to need deleting is a misspelt
+     * one, which is exactly the one already assigned. Refusing while anyone holds it would mean
+     * editing every doctor first just to reach the delete button. Only the join rows go — the
+     * doctors themselves survive, and a doctor with no specialization is a valid record.
+     */
+    @Test
+    void deleteSpecialization_removesItFromTheDoctorsHoldingIt() {
+        Specialization cardiology = new Specialization();
+        cardiology.setId(5L);
+        cardiology.setName("Cardiolgy");          // the misspelling being corrected
+        Specialization neurology = new Specialization();
+        neurology.setId(6L);
+        neurology.setName("Neurology");
+
+        Doctor holder = new Doctor();
+        holder.setId(1L);
+        holder.setSpecializations(new java.util.HashSet<>(Set.of(cardiology, neurology)));
+        Doctor bystander = new Doctor();
+        bystander.setId(2L);
+        bystander.setSpecializations(new java.util.HashSet<>(Set.of(neurology)));
+
+        when(specializationRepository.findById(5L)).thenReturn(Optional.of(cardiology));
+        when(doctorRepository.findAll()).thenReturn(List.of(holder, bystander));
+
+        doctorService.deleteSpecialization(5L, TestAuth.admin());
+
+        assertEquals(Set.of(neurology), holder.getSpecializations(), "only the deleted one comes off");
+        assertEquals(Set.of(neurology), bystander.getSpecializations(), "a doctor who never held it is untouched");
+        verify(specializationRepository).delete(cardiology);
+        verify(doctorRepository).saveAll(List.of(holder));
+        verify(auditLogService).log(any(), eq("DELETE"), eq("Specialization"), eq(5L), any());
+    }
+
+    /** The doctor list must say which entries are applications, not present them as staff. */
+    @Test
+    void getAllDoctors_marksPendingApplicants() {
+        when(doctorRepository.findAll()).thenReturn(List.of(doctor));
+        when(auditLogService.findPendingDoctorIds()).thenReturn(Set.of(1L));
+
+        assertTrue(doctorService.getAllDoctors().get(0).pending());
+    }
+
+    /** Report e lists staff. An applicant holds no DOCTOR role, so their count is always zero. */
+    @Test
+    void getDoctorsWithVisitCount_leavesOutPendingApplicants() {
+        when(doctorRepository.findDoctorsWithVisitCount()).thenReturn(List.of(
+                new ReportDTO.DoctorVisitCount(1L, "Jane Smith", 4L),
+                new ReportDTO.DoctorVisitCount(2L, "Pending Applicant", 0L)));
+        when(auditLogService.findPendingDoctorIds()).thenReturn(Set.of(2L));
+
+        List<ReportDTO.DoctorVisitCount> rows = doctorService.getDoctorsWithVisitCount();
+
+        assertEquals(1, rows.size());
+        assertEquals(1L, rows.get(0).doctorId());
     }
 
     @Test

@@ -12,12 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Tells the signed-in user which profiles they already hold.
- * WHY it is safe for any authenticated caller: the subject is taken from the verified token, never
- * from a parameter, so a user can only ever ask about themselves. It returns two booleans and no
- * personal data.
- */
+// Returns whether the caller already has a doctor/patient profile. Subject comes from the JWT.
 @RestController
 @RequestMapping("/api/registration-status")
 @RequiredArgsConstructor

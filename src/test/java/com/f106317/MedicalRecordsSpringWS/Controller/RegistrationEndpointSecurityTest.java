@@ -90,7 +90,7 @@ class RegistrationEndpointSecurityTest {
     @WithMockUser(roles = "ADMIN")
     void adminCanCreateDoctor() throws Exception {
         when(doctorService.createDoctor(any(), any()))
-                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", true, List.of(), null));
+                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", true, List.of(), null, false));
         mockMvc.perform(post("/api/doctors").contentType(MediaType.APPLICATION_JSON).content(DOCTOR_BODY))
                 .andExpect(status().isCreated());
     }
@@ -126,7 +126,7 @@ class RegistrationEndpointSecurityTest {
     @WithMockUser
     void anySignedInUserMaySelfRegisterAsDoctor() throws Exception {
         when(doctorService.selfRegister(any(), any()))
-                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", false, List.of(), null));
+                .thenReturn(new DoctorResponse(1L, "kc-1", "Ivan", "Petrov", false, List.of(), null, true));
         mockMvc.perform(post("/api/doctors/self-register")
                         .contentType(MediaType.APPLICATION_JSON).content(DOCTOR_SELF_BODY))
                 .andExpect(status().isCreated());
@@ -135,11 +135,27 @@ class RegistrationEndpointSecurityTest {
     @Test
     @WithMockUser
     void anySignedInUserMaySelfRegisterAsPatient() throws Exception {
-        when(patientService.selfRegister(any(), any()))
-                .thenReturn(new PatientResponse(1L, "kc-1", "1234567890", "John", "Doe", null, null, null));
+        when(patientService.selfRegister(any(), any())).thenReturn(
+                new com.f106317.MedicalRecordsSpringWS.Service.PatientService.SelfRegistration(
+                        new PatientResponse(1L, "kc-1", "1234567890", "John", "Doe", null, null, null), true));
         mockMvc.perform(post("/api/patients/self-register")
                         .contentType(MediaType.APPLICATION_JSON).content(PATIENT_BODY))
                 .andExpect(status().isCreated());
+    }
+
+    /**
+     * Repeating the request is the documented way out of a PATIENT grant that failed while Keycloak
+     * was unreachable, so it must answer, not refuse. 200 rather than 201 says nothing was created.
+     */
+    @Test
+    @WithMockUser
+    void repeatingPatientSelfRegistrationReturnsTheExistingRecord() throws Exception {
+        when(patientService.selfRegister(any(), any())).thenReturn(
+                new com.f106317.MedicalRecordsSpringWS.Service.PatientService.SelfRegistration(
+                        new PatientResponse(1L, "kc-1", "1234567890", "John", "Doe", null, null, null), false));
+        mockMvc.perform(post("/api/patients/self-register")
+                        .contentType(MediaType.APPLICATION_JSON).content(PATIENT_BODY))
+                .andExpect(status().isOk());
     }
 
     @Test

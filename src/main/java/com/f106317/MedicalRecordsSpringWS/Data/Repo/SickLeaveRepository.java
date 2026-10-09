@@ -10,11 +10,7 @@ import java.util.List;
 
 @Repository
 public interface SickLeaveRepository extends JpaRepository<SickLeave, Long> {
-    /**
-     * WHAT: A JPQL query that extracts the year and month from the sick leave start date and groups by both.
-     * WHY: Fulfills the requirement "Information for the month in the year when most sick leaves were issued".
-     * Groups by both year AND month to avoid cross-year aggregation bugs.
-     */
+    // Report: month with most sick leaves. Groups by year+month to avoid cross-year aggregation.
     @Query("""
             SELECT new com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO$SickLeaveMonthCount(
                        YEAR(s.validFrom), MONTH(s.validFrom), COUNT(s))
@@ -24,10 +20,7 @@ public interface SickLeaveRepository extends JpaRepository<SickLeave, Long> {
             """)
     List<ReportDTO.SickLeaveMonthCount> findMonthsWithMostSickLeaves();
     
-    /**
-     * WHAT: A JPQL query that groups sick leaves by the issuing doctor via the Visit entity.
-     * WHY: Fulfills the requirement "Information on the doctor(s) who issued the most sick leaves".
-     */
+    // Report: which doctor issued the most sick leaves.
     @Query("""
             SELECT new com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO$DoctorSickLeaveCount(
                        s.visit.doctor.id,

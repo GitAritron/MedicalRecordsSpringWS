@@ -22,8 +22,7 @@ import java.util.Set;
 
 @Entity
 @Table(name = "visit", uniqueConstraints = {
-        // Two constraints, not one: neither implies the other. A doctor cannot be double-booked, and
-        // separately a patient cannot be in two places at the same time.
+        // Two separate constraints: no double-booking for doctor or patient.
         @UniqueConstraint(name = "uq_doctor_slot", columnNames = {"doctor_id", "visit_date", "visit_time"}),
         @UniqueConstraint(name = "uq_patient_slot", columnNames = {"patient_id", "visit_date", "visit_time"})
 }, indexes = @Index(name = "idx_visit_date", columnList = "visit_date"))  // mirrors init.sql
@@ -46,8 +45,7 @@ public class Visit extends BaseEntity {
     @Column(name = "visit_time", nullable = false)
     private LocalTime visitTime;
 
-    // Set, not List: VisitRepository fetches both collections in one entity graph, and Hibernate
-    // refuses to fetch two bags (List without @OrderColumn) simultaneously — see MultipleBagFetchException.
+    // Set not List - Hibernate can't fetch two Lists simultaneously (MultipleBagFetchException).
     @OneToMany(mappedBy = "visit", cascade = CascadeType.ALL, orphanRemoval = true)
     private Set<Diagnosis> diagnoses = new LinkedHashSet<>();
 

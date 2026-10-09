@@ -299,4 +299,132 @@ class InsuranceServiceTest {
         assertEquals(6, rows.get(1).unpaidMonths().size());
         assertTrue(rows.get(0).unpaidMonths().isEmpty(), "fully covered patients owe nothing");
     }
+
+    // ──────────────────────────────────────────────
+    // Correcting a recorded contribution
+    // ──────────────────────────────────────────────
+
+    private static Patient patientWithId(long id) {
+        Patient patient = new Patient();
+        patient.setId(id);
+        patient.setFirstName("Ivan");
+        patient.setLastName("Dimitrov");
+        return patient;
+    }
+
+    private static PaidInsurance paymentOn(long id, Patient patient, LocalDate coveredMonth) {
+        PaidInsurance payment = new PaidInsurance();
+        payment.setId(id);
+        payment.setPatient(patient);
+        payment.setInsuranceDate(coveredMonth);
+        payment.setPaidOn(coveredMonth.plusDays(4));
+        return payment;
+    }
+
+    /**
+     * Correcting a payment normalises the new month exactly as recording one does.
+     * WHY: insuranceDate *is* the month key — the covered-month queries read YEAR and MONTH off it
+     * and the unique constraint is on the column — so a correction that stored the 7th would leave
+     * the record inconsistent with every row the seed and recordPayment write.
+     */
+    @Test
+    void updatePayment_normalisesTheCoveredMonthToTheFirst() {
+        Patient patient = patientWithId(1L);
+        PaidInsurance existing = paymentOn(9L, patient, LocalDate.of(2026, 2, 1));
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(insuranceRepository.findById(9L)).thenReturn(Optional.of(existing));
+        when(insuranceRepository.findByPatientIdAndInsuranceDate(1L, LocalDate.of(2026, 3, 1)))
+                .thenReturn(Optional.empty());
+        when(insuranceRepository.save(any(PaidInsurance.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var response = insuranceService.updatePayment(1L,  9L,
+                new InsurancePaymentRequest(LocalDate.of(2026, 3, 17), LocalDate.of(2026, 3, 20)),
+                TestAuth.admin());
+
+        assertEquals(LocalDate.of(2026, 3, 1), response.insuranceDate(), "the covered month, not the day picked");
+        assertEquals(LocalDate.of(2026, 3, 20), response.paidOn(), "paidOn is when the money arrived");
+    }
+
+    /** The one-payment-per-month rule still holds when a payment is moved onto a taken month. */
+    @Test
+    void updatePayment_refusesToMoveOntoAMonthAnotherPaymentCovers() {
+        Patient patient = patientWithId(1L);
+        PaidInsurance existing = paymentOn(9L, patient, LocalDate.of(2026, 2, 1));
+        PaidInsurance marchAlreadyPaid = paymentOn(10L, patient, LocalDate.of(2026, 3, 1));
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(insuranceRepository.findById(9L)).thenReturn(Optional.of(existing));
+        when(insuranceRepository.findByPatientIdAndInsuranceDate(1L, LocalDate.of(2026, 3, 1)))
+                .thenReturn(Optional.of(marchAlreadyPaid));
+
+        assertThrows(IllegalArgumentException.class, () -> insuranceService.updatePayment(1L, 9L,
+                new InsurancePaymentRequest(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 20)),
+                TestAuth.admin()));
+        verify(insuranceRepository, never()).save(any());
+    }
+
+    /** A payment does not conflict with itself — correcting only paidOn must be allowed. */
+    @Test
+    void updatePayment_keepingTheSameMonthIsNotAConflict() {
+        Patient patient = patientWithId(1L);
+        PaidInsurance existing = paymentOn(9L, patient, LocalDate.of(2026, 2, 1));
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(insuranceRepository.findById(9L)).thenReturn(Optional.of(existing));
+        when(insuranceRepository.findByPatientIdAndInsuranceDate(1L, LocalDate.of(2026, 2, 1)))
+                .thenReturn(Optional.of(existing));
+        when(insuranceRepository.save(any(PaidInsurance.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var response = assertDoesNotThrow(() -> insuranceService.updatePayment(1L, 9L,
+                new InsurancePaymentRequest(LocalDate.of(2026, 2, 28), LocalDate.of(2026, 5, 2)),
+                TestAuth.admin()));
+
+        assertEquals(LocalDate.of(2026, 5, 2), response.paidOn(), "a late payment still covers February");
+    }
+
+    /**
+     * A payment reached through the wrong patient's URL is not found.
+     * WHY it matters: the id alone would let one patient's contribution be edited or removed under
+     * another patient's path, and the audit entry would then name the wrong person.
+     */
+    @Test
+    void deletePayment_refusesAPaymentBelongingToAnotherPatient() {
+        Patient thisPatient = patientWithId(1L);
+        PaidInsurance someoneElses = paymentOn(9L, patientWithId(2L), LocalDate.of(2026, 2, 1));
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(thisPatient));
+        when(insuranceRepository.findById(9L)).thenReturn(Optional.of(someoneElses));
+
+        assertThrows(com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException.class,
+                () -> insuranceService.deletePayment(1L, 9L, TestAuth.admin()));
+        verify(insuranceRepository, never()).delete(any());
+    }
+
+    /** The audit entry names the month, because the row itself is gone by the time anyone reads it. */
+    @Test
+    void deletePayment_recordsWhichMonthWasWithdrawn() {
+        Patient patient = patientWithId(1L);
+        PaidInsurance february = paymentOn(9L, patient, LocalDate.of(2026, 2, 1));
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(insuranceRepository.findById(9L)).thenReturn(Optional.of(february));
+
+        insuranceService.deletePayment(1L, 9L, TestAuth.admin());
+
+        verify(insuranceRepository).delete(february);
+        ArgumentCaptor<String> label = ArgumentCaptor.forClass(String.class);
+        verify(auditLogService).log(any(), eq("DELETE"), eq("PaidInsurance"), eq(9L), label.capture());
+        assertTrue(label.getValue().contains("2026-02"), "the withdrawn month must survive the row");
+    }
+
+    @Test
+    void listPayments_returnsWhatWasRecorded() {
+        Patient patient = patientWithId(1L);
+        when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
+        when(insuranceRepository.findByPatientIdOrderByInsuranceDateDesc(1L)).thenReturn(List.of(
+                paymentOn(10L, patient, LocalDate.of(2026, 3, 1)),
+                paymentOn(9L, patient, LocalDate.of(2026, 2, 1))));
+
+        var payments = insuranceService.listPayments(1L);
+
+        assertEquals(2, payments.size());
+        assertEquals(LocalDate.of(2026, 3, 1), payments.get(0).insuranceDate(), "newest covered month first");
+        assertEquals(1L, payments.get(0).patientId());
+    }
 }

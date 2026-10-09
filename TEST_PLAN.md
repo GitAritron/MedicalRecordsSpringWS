@@ -58,8 +58,9 @@ Coverage report: `build/reports/jacoco/test/html/index.html`
 this now enforces the 0.60 minimum in `build.gradle.kts` — previously it was configured but never
 attached to anything, so the threshold could not fail.
 
-> The rule measures **instruction** coverage, not line coverage. It currently passes at ~65%
-> (line 68%, method 69%). Branch coverage is ~53% — below the number, but not what the rule counts.
+> The rule measures **instruction** coverage, not line coverage. It currently passes at **70.2%**
+> (line 72.8%, method 73.5%). Branch coverage is **60.1%** — the lowest of the four, but not what
+> the rule counts.
 
 > If a test fails here, stop. Everything below assumes a green build.
 
@@ -190,11 +191,13 @@ redirect to `/auth` in the Network tab — the query string carries `code_challe
 | 3.2c | DOCTOR | My Patients | Dr. Georgi Ivanov's roster — **9 patients** (ids 1–9), the largest of the four |
 | 3.2c-2 | DOCTOR (`doctor2`) | My Patients | Dr. Dimitar Petrov is not a GP, so the screen is titled **Patients You Have Seen** and lists the distinct patients from his own visits — not "No patients assigned to you." Same for `doctor4` |
 | 3.2d | PATIENT | My Medical History | Ivan Dimitrov's visits, each with diagnosis, prescription and any sick leave, plus a green **Health Insurance Active** badge with no months outstanding |
-| 3.2e | ADMIN | Patients | An **Insurance** column on every row — verdict plus the run, e.g. *Insured 6/6*, *Not insured 3/6* |
+| 3.2e | ADMIN | Patients | An **Insurance** column on every row: the verdict, followed by how many of the last six months are still outstanding when any are — e.g. *Insured*, *Not insured 3 months owed*. An insured patient who has not yet paid the current month correctly reads *Insured 1 month owed*. No `6/6`-style run appears anywhere (see the note under §4.3) |
 | 3.2f | DOCTOR | My Patients | The same Insurance column and a **Visits** action, and **no + Insurance button** on any row — recording a payment is an administrator's action. Previously this screen showed name and EGN and nothing else |
 | 3.2f-2 | DOCTOR | All Patients | Likewise no **+ Insurance**. A direct `POST /api/patients/1/insurance` with the doctor's token returns **403** |
 | 3.2g | ADMIN | Visits | A **Sick Leave** column. The other two visit views always had it; this one did not |
 | 3.2h | ADMIN | Audit Logs | The **Actor** column shows usernames (`admin`, `doctor`), not Keycloak UUIDs |
+| 3.2h-2 | ADMIN | Audit Logs | Under the table: *Page 1 of N · T entries*, **← Prev** disabled. After more than 50 recorded actions (four passes of §4.1) **Next →** is enabled, and the last page ends with the oldest entry and disables Next |
+| 3.2h-3 | ADMIN | Audit Logs | The header search box narrows the entries **on the page** — it filters loaded rows, so it does not reach entries on other pages. That is the intended limit at this size; Prev / Next reach the rest |
 
 **Fail symptom to watch for:** an HTTP 500 on the Visits or My Medical History screens. Those two load the full visit graph (patient, doctor, diagnoses, prescriptions, sick leave) in one query, which is the most fragile read in the system.
 
@@ -219,6 +222,19 @@ This is the only flow that writes to Keycloak, and it is entirely mocked in the 
 
 **Fail symptom:** registration succeeds but the role never appears. Check the app log for `Could not assign PATIENT role in Keycloak` — role assignment is deliberately non-fatal, so the profile is created either way and only the log reveals the failure.
 
+**3.4b — recovering from that failure.** Provoke it: stop Keycloak's admin path by setting a wrong
+`keycloak.admin.password` in `application.yml`, restart the app, and self-register a fresh user.
+
+1. The profile is created and the role is not. Sign out and back in.
+2. **Pass:** the screen reads *"Profile already created"* and offers **Retry activation** — not
+   *Reload*, which cannot grant a role, and the text no longer claims the profile was "approved"
+   (patients have no approval step).
+3. Restore the password, restart the app, sign in and press **Retry activation**, then submit the
+   same details. **Pass:** `POST /api/patients/self-register` answers **200**, not a duplicate-profile
+   error; the role is granted and the app lands on My Medical History.
+4. **Pass:** the patient list still holds exactly one record for that user — a repeat registration
+   writes no second record, and the audit log shows one `SELF_REGISTER`, not two.
+
 ---
 
 ## 4. Spec conformance
@@ -241,6 +257,13 @@ As **admin** unless noted. For each: create, read back, edit, delete.
 | 4.1i-2 | **Edit clinical items** | Same visit → ✎ on the diagnosis, change it to `Revised Diagnosis`; ✎ on the prescription, change the dose; ✎ on the sick leave, change it to 7 days and **Save** | Each shows the new value. The audit log records `UPDATE Diagnosis`, `UPDATE Prescription` and `UPDATE SickLeave` — not a delete followed by a create |
 | 4.1i-3 | Sick-leave bound on edit | ✎ the sick leave, enter `400` days, **Save** | Refused with the 1–365 message; **Cancel** restores the issued record unchanged |
 | 4.1j | Delete clinical items | Remove the diagnosis, prescription, and sick leave via ✕ | Each disappears |
+| 4.1l | **Insurance — see** | Patients → **Insurance** on a row | The patient's individual contributions: covered month, paid-on date, and the verdict above them. Doctors have no such button |
+| 4.1m | Insurance — correct | **Edit** a payment, move it to a month not yet covered, Save | The row moves; the verdict and unpaid months follow. The audit log shows `UPDATE PaidInsurance` |
+| 4.1n | Insurance — the rule still holds | Edit a payment onto a month **another** payment already covers | Refused with *"Insurance for … is already recorded for this patient"*. Editing only the paid-on date of a payment, keeping its month, is accepted — a payment does not conflict with itself |
+| 4.1o | Insurance — remove | **Delete** a payment, confirm | The row goes, that month becomes unpaid, and the audit log shows `DELETE PaidInsurance` naming the month |
+| 4.1p | **Specializations** | Doctors → **Specializations** → **Rename** one held by a doctor | The new name shows on every doctor holding it — the join carries no copy of the name |
+| 4.1q | Specialization delete | Delete one held by a doctor, confirm | It disappears from the list **and** from those doctors' rows. The doctors themselves are still there; the audit log names how many it came off |
+| 4.1j-2 | Closing without a diagnosis | With no diagnosis on the visit, press **Done — Close** | A confirmation asks whether to close it anyway. Cancel keeps the visit open; OK closes it, and the Visits table then shows **No diagnosis** in that row rather than a dash |
 | 4.1k | Visit delete | Delete the visit | Row disappears |
 | 4.1l | Patient delete | Delete `Test Patient` | Row disappears |
 
@@ -263,16 +286,16 @@ order also groups cleanly by subject, which is why the colour coding survives it
 
 | # | Card | Where | Pass |
 |---|---|---|---|
-| 4.3a | **a** · Patients with a Given Diagnosis | Reports → card a → pick `Acute Bronchitis` | 7 visits' worth of patients, each with EGN and GP |
-| 4.3b | **b** · Times Diagnosed per Condition | Reports → card b | Ranked, headed by *Acute Bronchitis* 7, *Hypertension* 6, *Influenza Type A* 5 |
+| 4.3a | **a** · Patients with a Given Diagnosis | Reports → card a → pick `Acute Bronchitis` | 7 visits' worth of patients, each with EGN and GP, above them a count — *"N patients"*. §3a asks for the **number** of patients with a given diagnosis, so the report must state it, not just list names |
+| 4.3b | **b** · Times Diagnosed per Condition | Reports → card b | Ranked, headed by *Acute Bronchitis* 7, *Hypertension* 6, *Influenza Type A* 5. Above the table: *"Most frequently diagnosed: **Acute Bronchitis** (7)"*, and that row is highlighted. §3b writes "диагнозата/диагнозите", so **every** row tied for the top count must be named and highlighted — verify by adding diagnoses until a second condition also reaches the top |
 | 4.3c | **c** · Patients Registered with a Given GP | Reports → card c → pick Dr. Georgi Ivanov | His 9 patients. The picker lists only GPs. Also reachable from the **Patients** button on a GP row in Doctors |
 | 4.3d | **d** · Patients Registered per GP | Reports → card d | Only the 4 GPs, ranked 9 · 6 · 5 · 3 |
 | 4.3e | **e** · Visits Recorded per Doctor | Reports → card e | All 8 doctors, ranked 11 · 8 · 7 · 6 · 5 · 4 · 3 · 2, summing to 46 |
 | 4.3f | **f** · Visits for a Given Patient | Reports → card f → pick a patient | Visit, date, doctor, diagnosis, prescription **and sick leave** — the last column is the one §1 asks for ("излизал ли е в болнични и за колко време") |
 | 4.3g | **g** · Visits in a Given Date Range | Reports → card g → last 12 months | All 46 visits. Narrow to one month and the count drops |
 | 4.3h | **h** · Visits for a Given Doctor in a Date Range | Reports → card h → Dr. Georgi Ivanov, last 12 months | 11 visits, all his |
-| 4.3i | **i** · Sick Leaves Issued per Month | Reports → card i | 6 distinct months, ranked; the busiest is the top row |
-| 4.3j | **j** · Sick Leaves Issued per Doctor | Reports → card j | Ranked, headed by Dr. Georgi Ivanov with 9 |
+| 4.3i | **i** · Sick Leaves Issued per Month | Reports → card i | 6 distinct months, ranked; the busiest is the top row, highlighted, and named above the table as *"Month with the most sick leaves"* — ties included |
+| 4.3j | **j** · Sick Leaves Issued per Doctor | Reports → card j | Ranked, headed by Dr. Georgi Ivanov with 9, highlighted and named above the table as *"Issued the most sick leaves"* — ties included |
 
 **Beyond the ten (4.3l):** the **Unpaid Months per Patient** card — the *справка* §1 requires of patient
 records. Previously this existed only as a true/false badge on the patient's own dashboard, invisible
@@ -315,8 +338,18 @@ in a spreadsheet, and that Cyrillic names are not mangled (the file carries a UT
    **Pass:** shows *"Application under review"* — **not** the role-selection screen again.
 4. Sign in as `admin` → Reports.
    **Pass:** banner *"🔔 Doctors Awaiting Approval (1)"* showing the name, not an entity id.
+   **Also check, before approving:** Doctors shows `testdoctor` marked **Pending approval**; the
+   **+ Add New Visit** doctor picker does **not** offer them; report e does not list them; and signed
+   in as `patient`, the Doctors Directory does not show them at all.
 5. Click **Approve**, confirm.
-   **Pass:** the banner disappears. Verify in Keycloak that `testdoctor` now holds **DOCTOR**.
+   **Pass:** the banner disappears, and a second prompt offers to set specializations and GP status —
+   accepting opens the edit form for that doctor. Verify in Keycloak that `testdoctor` now holds
+   **DOCTOR**. The **Pending approval** badge is gone and they now appear in the visit picker.
+   **4.4h-2 — approval by editing.** Repeat steps 1–3 with a second applicant, then instead of
+   **Approve**, open Doctors → **Edit** on them, tick a specialization and **Save**.
+   **Pass:** the pending banner clears, the audit log shows `UPDATE Doctor` **and** `APPROVE_DOCTOR`,
+   and the badge disappears. Previously this route granted the role while the banner went on listing
+   them as pending.
 6. Reload the admin dashboard.
    **Pass:** the banner does not come back.
 7. Sign in as `testdoctor`.
@@ -570,6 +603,100 @@ dropped rows off the end of a report.
 
 ---
 
+## 6A. Presentation and state pass
+
+Everything above tests whether a feature *works*. This section tests whether it **looks like the rest
+of the application** and whether **state left over from the last thing you did leaks into the next**.
+
+Neither is covered by any automated test: there are no JavaScript tests, and the Java suite never
+renders a page. A control can pass every functional row above and still be visibly bolted on — that
+is what prompted this section, and it is the kind of defect only a person looking at the screen
+finds.
+
+Do this pass as **admin**, at a normal window width, with the browser console open.
+
+### 6A.1 Style vocabulary
+
+The application has a small set of established patterns. Anything new must use them rather than
+invent its own. Walk each screen below and check the control against the reference:
+
+| Pattern | Reference to compare against | Where to check it |
+|---|---|---|
+| Button above a table | Patients → **+ Add New Patient** | **Insurance** and **Specializations** screens |
+| Button inside a table row | Patients → **Edit** / **Delete** — small, coloured by action | Insurance payments rows, Specializations rows |
+| Small button beside a table | Reports → **Export CSV** | Audit log **← Prev** / **Next →** |
+| Badge | The role badge in the header, and the **Action** chips in the audit table | **Pending approval** on a doctor row |
+| Table | Any `.data-table`: sortable headers, same row height and borders | Insurance payments, Specializations, audit log |
+| Row action in a list | The red ✕ on a diagnosis | The amber **Edit** beside it |
+
+| # | Check | Pass |
+|---|---|---|
+| 6A.1b | Audit Logs — **← Prev** / **Next →** are the same size as **Export CSV**, not full-size form buttons; the disabled one is visibly dimmed |  |
+| 6A.1c | Doctors — the **Pending approval** badge is the same shape and weight as other badges, just smaller; it does not wrap the name onto two lines |  |
+| 6A.1d | Visit modal — **Edit** sits beside the ✕, aligned, and both are monochrome. A pencil glyph would render as a colour emoji on Windows beside a text ✕, which is why the word is used |  |
+| 6A.1e | Insurance and Specializations screens — heading, buttons and table are laid out like Patients and Doctors |  |
+| 6A.1f | Reports — the row count and the *"Most frequently diagnosed: …"* line sit above the table without crowding it; the highlighted row is readable, not just tinted |  |
+| 6A.1g | Nothing on any new screen uses a font size, colour or corner radius that appears nowhere else |  |
+
+### 6A.2 Leftover state between actions
+
+Every screen below has **two modes** driven by a variable. The bug to hunt is a variable that is not
+cleared, so the second use of a control does what the first one did.
+
+| # | Sequence | Expect |
+|---|---|---|
+| 6A.2a | Visit modal: ✎ a sick leave → **Cancel** → ✎ again | The form reopens prefilled and still says **Save**, not **+ Issue** |
+| 6A.2b | Visit modal: ✎ a sick leave → **Cancel** → close the modal → open a **different** visit that has a sick leave | The issued record shows with the form hidden. The button does not say **Save** for a sick leave from the previous visit |
+| 6A.2c | Visit modal: ✎ a sick leave → **Save** → ✕ delete it → issue a new one | The form says **+ Issue** and POSTs. A `PUT` to the deleted id in the network tab is a failure |
+| 6A.2d | Insurance: **Edit** a payment → Cancel → **+ Record Payment** | Title reads *Record Health Insurance Payment*, button reads **Record Payment**, dates default to this month / today — not the edited payment's values |
+| 6A.2e | Insurance: **Edit** → Cancel → **+ Record Payment** → submit | A **new** payment is created. If it instead overwrote the one you had open for editing, the payment id was not cleared |
+| 6A.2f | Audit Logs: **Next →** → switch to Reports → back to Audit Logs | You are on page 1, not the page you left |
+| 6A.2g | Audit Logs: type in the header search box → **Next →** | The next page renders **all** its rows. The search box hides rows in the DOM, so a stale filter must not carry over and hide rows on the new page |
+| 6A.2h | Patients → **Visits** on a row → **← Back to Patients**; then My Patients (as `doctor`) → **Visits** → **← Back to Patients** | Each returns to the list you came from, and the highlighted tab matches the screen |
+| 6A.2i | Sort column 1 of the audit table, then sort column 1 of a different table on another screen | The second table's first click sorts **ascending**. Sharing a direction across tables is the old bug |
+
+### 6A.3 Empty, long and hostile values
+
+New screens need the same treatment the old ones got.
+
+| # | Check | Expect |
+|---|---|---|
+| 6A.3a | Insurance screen for a patient with no payments | *"No contributions recorded for this patient."* — not an empty table with headers |
+| 6A.3b | Specializations screen after deleting every specialization | A stated empty message, and **+ Add Specialization** still reachable |
+| 6A.3c | As `doctor2` (not a GP) with his visits removed | *"You have not examined any patients yet."* — the non-GP wording, not *"No patients assigned to you."* |
+| 6A.3d | Audit Logs on a freshly reseeded database, before any action | *"No audit logs found."* and no pager — the seed writes no audit rows |
+| 6A.3e | Rename a specialization to `<script>alert(1)</script>` | Renders literally on the Specializations screen **and** on every doctor row holding it. No alert |
+| 6A.3f | Edit a diagnosis to `O'Brien "quoted" <b>` | Renders literally; the ✎ and ✕ on that row still work afterwards |
+| 6A.3g | A patient named `O'Brien` | The **Insurance** button on that row opens the right patient's payments |
+| 6A.3h | Rename a specialization to a very long string | The Doctors table does not overflow horizontally |
+
+### 6A.4 What each role sees
+
+Every change that hides something needs checking from the role it hides it from — and from the role
+it does not.
+
+| # | Role | Check |
+|---|---|---|
+| 6A.4a | DOCTOR | All Patients and My Patients show **no + Insurance** button anywhere, but the **Insurance** column still shows the verdict |
+| 6A.4b | DOCTOR | Doctors Directory shows the **Specializations** button? It must **not** — that is admin-only, beside **+ Add New Doctor** |
+| 6A.4c | PATIENT | Doctors Directory lists no pending applicant, and no Actions column controls beyond what it had before |
+| 6A.4d | PATIENT | My Medical History is unchanged by this pass — visits still render with diagnosis, prescription and sick leave |
+| 6A.4e | ADMIN | Everything above is present, plus Insurance and Specializations management |
+
+### 6A.5 Console and network
+
+Keep the console open for the whole pass.
+
+| # | Check | Expect |
+|---|---|---|
+| 6A.5a | Every screen visited | No red console errors. A 401 on `/favicon.ico` is the one known exception and should not appear either |
+| 6A.5b | Audit Logs | The response JSON is `{ content: [...], page: { size, number, totalElements, totalPages } }`. A bare `PageImpl` shape means `WebConfig` is not applied |
+| 6A.5c | `bootRun` log at startup | No `PageImpl` serialisation warning from Spring Data |
+| 6A.5d | Report g with the dev profile | **One** select, not one per visit — the `@EntityGraph` on the period queries |
+| 6A.5e | Reports → any card | No `page` or `size` in the request URL |
+
+---
+
 ## 7. Sign-off checklist
 
 | Phase | Result | Notes |
@@ -587,6 +714,7 @@ dropped rows off the end of a report.
 | 4.4k Runtime-created accounts survive `docker compose down` | ☐ | |
 | 5. Every negative case is refused with the right status | ☐ | |
 | 6. Validation, insurance rule, escaping, pagination all hold | ☐ | |
+| 6A. New controls match the app's style and leak no state between uses | ☐ | |
 
 **Ready to demonstrate when every box is ticked.**
 

@@ -11,17 +11,10 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
-/**
- * An append-only record of who changed what.
- * WHY no association to the audited row: an audit entry has to outlive the record it describes, and
- * a deletion is the event most worth keeping. A real foreign key would either block the delete or
- * cascade the evidence away, so (entityType, entityId) is a deliberate soft reference and
- * entityLabel keeps a readable snapshot of a row that may no longer exist.
- */
+// Append-only audit trail. Uses (entityType, entityId) instead of FK - entries must survive record deletion.
 @Entity
 @Table(name = "audit_log", indexes = {          // mirrors init.sql
         @Index(name = "idx_al_entity", columnList = "entity_type, entity_id"),
-        @Index(name = "idx_al_actor", columnList = "actor"),
         @Index(name = "idx_al_created", columnList = "created_at")
 })
 @Getter
@@ -41,11 +34,7 @@ public class AuditLog extends BaseEntity {
     @Column(name = "entity_id", nullable = false)
     private Long entityId;
 
-    /**
-     * Who or what the entry refers to, captured when the action happened.
-     * WHY store it rather than resolve it on read: an entry frequently describes a record that has
-     * since been deleted, and an id alone then names something an administrator cannot look up.
-     */
+    // Snapshot of who/what this refers to, stored at write time because the record may be deleted later.
     @Column(name = "entity_label", length = 150)
     private String entityLabel;
 

@@ -12,8 +12,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-// Mirrors init.sql: the name index carries the "patients by diagnosis" and "most common diagnoses"
-// reports, which both filter or group on this column.
+// Same index as in init.sql; both diagnosis reports filter or group on name.
 @Table(name = "diagnosis", indexes = @Index(name = "idx_diagnosis_name", columnList = "name"))
 @Getter
 @Setter

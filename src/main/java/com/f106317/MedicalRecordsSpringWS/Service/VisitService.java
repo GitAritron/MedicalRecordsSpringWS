@@ -30,16 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.stream.Collectors;
 
-/**
- * Service layer for Visit operations.
- * WHAT: Handles the creation and management of medical visits, diagnoses, 
- * prescriptions, and sick leaves.
- * WHY: This class encapsulates the complex business rules of the medical system,
- * ensuring that doctors can only issue medical documents for visits they attended,
- * and patients can only view their own medical history.
- */
+
 @Service
 @RequiredArgsConstructor
 public class VisitService {
@@ -53,7 +45,7 @@ public class VisitService {
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
 
-    /** Outer bounds for a plausible visit or sick-leave date; see validatePlausibleDate. */
+    // Date bounds for sanity-checking visits and sick leaves.
     static final int MAX_HISTORY_YEARS = 100;
     static final int MAX_BOOKING_AHEAD_YEARS = 1;
 
@@ -61,14 +53,17 @@ public class VisitService {
     public List<VisitResponse> getAllVisits() {
         return visitRepository.findAll().stream()
                 .map(VisitResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
-    /**
-     * Retrieves a visit by ID.
-     * WHY: Uses `AuthorizationService.assertPatientCanAccessVisit` to guarantee
-     * a patient cannot type in a random visit ID in the URL to see someone else's medical data.
-     */
+    @Transactional(readOnly = true)
+    public List<VisitResponse> getAllVisitsOrderedByPatient() {
+        return visitRepository.findAllOrderByPatientNameAndDate().stream()
+                .map(VisitResponse::fromEntity)
+                .toList();
+    }
+
+    // Ensures patients can only access their own visits.
     @Transactional(readOnly = true)
     public VisitResponse getVisitById(Long id, Authentication authentication) {
         Visit visit = findVisitById(id);
@@ -76,12 +71,7 @@ public class VisitService {
         return VisitResponse.fromEntity(visit);
     }
 
-    /**
-     * Records a new medical visit.
-     * WHAT: Links a Doctor and a Patient to a specific date and time.
-     * WHY: Security forces a check `assertDoctorCanCreateVisit` so a doctor 
-     * cannot create a visit assigning a different doctor as the attending physician.
-     */
+    // Doctors can only create visits for themselves (not assign another doctor).
     @Transactional
     public VisitResponse createVisit(VisitRequest request, Authentication authentication) {
         Patient patient = patientRepository.findById(request.patientId())
@@ -155,7 +145,6 @@ public class VisitService {
         return VisitResponse.fromEntity(saved);
     }
 
-    /** Deletes a visit by ID. */
     @Transactional
     public void deleteVisit(Long id, Authentication authentication) {
         Visit visit = findVisitById(id);
@@ -171,32 +160,28 @@ public class VisitService {
         authorizationService.assertPatientCanAccessPatient(authentication, patient);
         return visitRepository.findByPatientId(patientId).stream()
                 .map(VisitResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public List<VisitResponse> getVisitsInPeriod(LocalDate start, LocalDate end) {
         return visitRepository.findVisitsInPeriod(start, end).stream()
                 .map(VisitResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public List<VisitResponse> getVisitsByDoctorInPeriod(Long doctorId, LocalDate start, LocalDate end) {
         return visitRepository.findVisitsByDoctorInPeriod(doctorId, start, end).stream()
                 .map(VisitResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     // ──────────────────────────────────────────────
     // Diagnosis CRUD
     // ──────────────────────────────────────────────
 
-    /**
-     * Issues a diagnosis for a specific visit.
-     * WHY: Doctors must be authorized to modify the visit (`assertDoctorCanModifyVisit`), 
-     * ensuring a doctor cannot add diagnoses to a visit conducted by another practitioner.
-     */
+    // Only the visit's own doctor can add diagnoses.
     @Transactional
     public DiagnosisResponse createDiagnosis(DiagnosisRequest request, Authentication authentication) {
         Visit visit = findVisitById(request.visitId());
@@ -246,7 +231,7 @@ public class VisitService {
     public List<PatientResponse> getPatientsByDiagnosis(String diagnosisName) {
         return diagnosisRepository.findPatientsByDiagnosisName(diagnosisName).stream()
                 .map(PatientResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -305,12 +290,6 @@ public class VisitService {
     // Sick Leave CRUD
     // ──────────────────────────────────────────────
 
-    /**
-     * Issues a sick leave for a visit.
-     * WHAT: Creates a sick leave record specifying the start date and duration.
-     * WHY: Meets the specification requirement that doctors can issue sick leaves 
-     * during a visit. Relational constraints in the Entity map it `@OneToOne` to the visit.
-     */
     @Transactional
     public SickLeaveResponse createSickLeave(SickLeaveRequest request, Authentication authentication) {
         Visit visit = findVisitById(request.visitId());
@@ -363,21 +342,14 @@ public class VisitService {
 
     @Transactional(readOnly = true)
     public List<ReportDTO.SickLeaveMonthCount> getMonthsWithMostSickLeaves() {
-        return sickLeaveRepository.findMonthsWithMostSickLeaves().stream()
-                .collect(Collectors.toList());
+        return sickLeaveRepository.findMonthsWithMostSickLeaves();
     }
 
     // ──────────────────────────────────────────────
     // Internal helpers
     // ──────────────────────────────────────────────
 
-    /**
-     * Rejects dates that cannot plausibly describe a real clinical event.
-     * WHY: these dates are only @NotNull at the DTO level, which accepts the year 9999. Visits and
-     * sick leaves are legitimately dated both retrospectively and ahead, so neither @Past nor
-     * @Future fits; a bounded range is the honest rule. The limits are deliberately generous —
-     * they exist to catch typos and junk input, not to encode clinic policy.
-     */
+    // Rejects dates that are obviously wrong (typos, junk input). Neither @Past nor @Future fits because visits can be backdated.
     private void validatePlausibleDate(LocalDate date, String label) {
         LocalDate today = LocalDate.now();
         if (date.isBefore(today.minusYears(MAX_HISTORY_YEARS))) {
@@ -390,14 +362,12 @@ public class VisitService {
         }
     }
 
-    /** Audit label for a visit, e.g. "Ivan Dimitrov / Dr. Georgi Ivanov, 2026-07-01". */
     private static String visitLabel(Visit visit) {
         return visit.getPatient().getFirstName() + " " + visit.getPatient().getLastName()
                 + " / Dr. " + visit.getDoctor().getFirstName() + " " + visit.getDoctor().getLastName()
                 + ", " + visit.getVisitDate();
     }
 
-    /** Audit label for a sick leave, e.g. "5 days from 2026-07-01 - Ivan Dimitrov / Dr. ...". */
     private static String sickLeaveLabel(SickLeave sickLeave) {
         return sickLeave.getValidForDays() + " days from " + sickLeave.getValidFrom()
                 + " - " + visitLabel(sickLeave.getVisit());

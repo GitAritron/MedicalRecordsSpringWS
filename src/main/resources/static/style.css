@@ -769,6 +769,53 @@ html::-webkit-scrollbar-thumb:hover {
 .muted       { color: #64748B; }
 .muted-label { color: #94A3B8; }
 
+/* A self-registered doctor nobody has approved yet. They hold no DOCTOR role.
+   Shaped like .role-badge above — same tint, border and radius — only smaller, because this one
+   sits inline beside a name in a table cell rather than standing alone in the header. */
+.pending-badge {
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid #F59E0B;
+    color: #F59E0B;
+    padding: 0.15rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* The answer to a "which is the most" clause, stated rather than left to be read off the table. */
+.report-answer {
+    color: var(--text-color);
+    font-size: 0.95rem;
+    margin: 0 0 0.5rem;
+}
+
+/* Every row tied for the top count. The clauses write "диагнозата/диагнозите" — ties are expected. */
+.report-top td {
+    background: rgba(16, 185, 129, 0.14);
+    font-weight: 600;
+}
+
+/* Prev / Next under a paged table. Only the audit log pages — see WebConfig.
+   Sized like the other table-adjacent controls (Export CSV), not like a form's primary button. */
+.pager {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.pager .btn {
+    padding: 0.3rem 0.9rem;
+    font-size: 0.8rem;
+}
+
+.pager button[disabled] {
+    opacity: 0.4;
+    cursor: default;
+}
+
 /* The ✕ that removes a diagnosis, prescription or sick leave from a visit. */
 .btn-remove {
     background: none;
@@ -778,14 +825,22 @@ html::-webkit-scrollbar-thumb:hover {
     font-size: 1rem;
 }
 
-/* The ✎ beside it, which corrects the same record instead of deleting it. */
+/* Its counterpart, which corrects the same record instead of deleting it.
+   WHY a word and not a pencil glyph: Windows resolves every pencil codepoint (U+270E, U+270F, …)
+   through Segoe UI Emoji, so it renders as a colour emoji beside a monochrome ✕ however the font
+   stack is written. "Edit" is also the word every other row action in the app uses. Amber matches
+   .btn-edit, so the pair reads the same as Edit/Delete elsewhere. */
 .btn-inline-edit {
     background: none;
     border: none;
     color: #F59E0B;
     cursor: pointer;
-    font-size: 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0 0.35rem;
 }
+
+.btn-inline-edit:hover { text-decoration: underline; }
 
 /* Verdict text in list cells — green for good standing, red for not. */
 .status-ok  { color: #10B981; font-weight: 600; }

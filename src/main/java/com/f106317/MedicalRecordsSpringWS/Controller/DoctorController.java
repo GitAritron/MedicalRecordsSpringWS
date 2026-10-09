@@ -20,15 +20,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * REST Controller for managing Doctor entities.
- * WHAT: Provides endpoints for managing doctors, specializations, and patient assignments.
- * WHY: Admins can create/edit/delete doctors, while Doctors can look up their own profile
- * or view their assigned patients.
- * <p>
- * The Keycloak calls live here rather than in {@link DoctorService} because they are writes to a
- * second system that no database transaction can undo — see {@link AccountProvisioningService}.
- */
+// Manages doctors, specializations, and Keycloak account provisioning.
 @RestController
 @RequestMapping("/api/doctors")
 @RequiredArgsConstructor
@@ -54,8 +46,24 @@ public class DoctorController {
 
     @PostMapping("/specializations")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<SpecializationResponse> createSpecialization(@Valid @RequestBody SpecializationRequest request) {
-        return new ResponseEntity<>(doctorService.createSpecialization(request), HttpStatus.CREATED);
+    public ResponseEntity<SpecializationResponse> createSpecialization(@Valid @RequestBody SpecializationRequest request,
+                                                                       Authentication authentication) {
+        return new ResponseEntity<>(doctorService.createSpecialization(request, authentication), HttpStatus.CREATED);
+    }
+
+    @PutMapping("/specializations/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<SpecializationResponse> updateSpecialization(@PathVariable Long id,
+                                                                       @Valid @RequestBody SpecializationRequest request,
+                                                                       Authentication authentication) {
+        return ResponseEntity.ok(doctorService.updateSpecialization(id, request, authentication));
+    }
+
+    @DeleteMapping("/specializations/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteSpecialization(@PathVariable Long id, Authentication authentication) {
+        doctorService.deleteSpecialization(id, authentication);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{id}")
@@ -70,23 +78,14 @@ public class DoctorController {
         return ResponseEntity.ok(doctorService.getDoctorByKeycloakId(keycloakId));
     }
 
-    /**
-     * Retrieves all patients assigned to a specific General Practitioner.
-     * WHY: Fulfills requirement "List of patients who have a given GP".
-     */
+    // Report: patients registered under a specific GP.
     @GetMapping("/{id}/patients")
     @PreAuthorize("hasAnyRole('ADMIN', 'DOCTOR')")
     public ResponseEntity<List<PatientResponse>> getPatientsByDoctor(@PathVariable Long id) {
         return ResponseEntity.ok(patientService.getPatientsByGp(id));
     }
 
-    /**
-     * Creates a doctor record, optionally provisioning a Keycloak account for them.
-     * WHY the role is granted here: previously nothing on this path touched Keycloak at all, so an
-     * administrator who linked a doctor to an account produced someone the system believed was a
-     * doctor but who could never sign in as one — and who never appeared in the pending-approvals
-     * list either, because that is built from self-registrations.
-     */
+    // Optionally creates a Keycloak account and grants DOCTOR role.
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<DoctorResponse> createDoctor(@Valid @RequestBody DoctorRequest request, Authentication authentication) {
@@ -101,12 +100,7 @@ public class DoctorController {
         return new ResponseEntity<>(withPassword(created, account), HttpStatus.CREATED);
     }
 
-    /**
-     * Lets a signed-in user apply for a doctor account.
-     * WHY: Separate from the admin endpoint above because the applicant may not choose their own
-     * identity or GP status — the service derives both. The account stays inactive until an
-     * administrator approves it through {@link #approveDoctor}.
-     */
+    // Self-registration: identity comes from the JWT, not the request body.
     @PostMapping("/self-register")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<DoctorResponse> selfRegisterDoctor(@Valid @RequestBody DoctorSelfRegistrationRequest request,
@@ -114,24 +108,14 @@ public class DoctorController {
         return new ResponseEntity<>(doctorService.selfRegister(request, authentication), HttpStatus.CREATED);
     }
 
-    /**
-     * Approves a self-registered doctor, granting them the DOCTOR role in Keycloak.
-     * WHY: completes the self-registration flow inside the application. Without it an administrator
-     * had to assign the role by hand in the Keycloak console, and the pending list never cleared
-     * because nothing recorded that the approval had happened.
-     */
+    // Grants the DOCTOR role in Keycloak and records approval in the audit log.
     @PostMapping("/{id}/approve")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<DoctorResponse> approveDoctor(@PathVariable Long id, Authentication authentication) {
         return ResponseEntity.ok(doctorService.approveDoctor(id, authentication));
     }
 
-    /**
-     * Updates a doctor, and keeps the Keycloak side in step.
-     * WHY the revoke: when the record is pointed at a different account — or unlinked entirely by
-     * clearing the field — the previous holder keeps the DOCTOR role unless it is taken back, and a
-     * stale DOCTOR role still reaches every patient, visit and report through the API.
-     */
+    // On account re-link, revokes the old holder's DOCTOR role.
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<DoctorResponse> updateDoctor(@PathVariable Long id, @Valid @RequestBody DoctorRequest request, Authentication authentication) {
@@ -152,9 +136,6 @@ public class DoctorController {
         return ResponseEntity.ok(withPassword(updated, account));
     }
 
-    /**
-     * Issues a fresh one-time password for the account behind this record.
-     */
     @PostMapping("/{id}/reissue-password")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<AccountCredentialsResponse> reissuePassword(@PathVariable Long id) {
@@ -162,11 +143,7 @@ public class DoctorController {
         return ResponseEntity.ok(accountProvisioning.reissuePassword(doctor.keycloakId()));
     }
 
-    /**
-     * Deletes a doctor record and takes back the DOCTOR role.
-     * WHY the account itself survives: see the note on deleting a patient — de-roling is enough to
-     * cut off clinical data without this application destroying an identity it does not own.
-     */
+    // Revokes the DOCTOR role but keeps the Keycloak account itself.
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deleteDoctor(@PathVariable Long id, Authentication authentication) {
@@ -176,7 +153,6 @@ public class DoctorController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Attaches the one-time password to the response, but only when an account was just created. */
     private DoctorResponse withPassword(DoctorResponse response,
                                         AccountProvisioningService.ProvisionedAccount account) {
         return account.created() ? response.withTemporaryPassword(account.temporaryPassword()) : response;

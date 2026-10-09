@@ -14,12 +14,6 @@ services:
       - ./src/main/resources/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./src/main/resources/db/test-data.sql:/docker-entrypoint-initdb.d/02-test-data.sql
     healthcheck:
-      # 127.0.0.1 rather than localhost, deliberately: localhost makes mysqladmin use the unix
-      # socket, which the temporary server that runs the init scripts also answers — so the
-      # container could report healthy while the keycloak schema did not yet exist, and Keycloak
-      # would start against a missing database and fail. That temporary server runs with
-      # --skip-networking, so a TCP check only succeeds once the real server is accepting
-      # connections, which is after the init scripts have finished.
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
       interval: 10s
       timeout: 5s
@@ -33,15 +27,10 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       # Without these Keycloak runs on dev-mode H2 inside the container with no volume, so every
       # account created at runtime through KeycloakAdminService disappears on `docker compose down`.
-      # The realm and its seeded users return via --import-realm, which hides the loss in a demo.
-      # allowPublicKeyRetrieval is needed because MySQL 8 defaults to caching_sha2_password and the
-      # connection is unencrypted on the compose network.
       KC_DB: mysql
       KC_DB_URL: "jdbc:mysql://mysql:3306/keycloak?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8"
       KC_DB_USERNAME: root
       KC_DB_PASSWORD: ${DB_PASSWORD:-root}
-    # --health-enabled exposes /health/ready, which the healthcheck below probes. Without it that
-    # path 404s and the container reports "unhealthy" forever even though Keycloak is serving fine.
     command: start-dev --import-realm --health-enabled=true
     ports:
       - "8081:8080"

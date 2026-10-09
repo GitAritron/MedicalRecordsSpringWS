@@ -56,14 +56,7 @@ public class AuthorizationService {
         }
     }
 
-    /**
-     * Choosing a patient's general practitioner: the patient themselves, or an administrator.
-     * WHY separate from assertPatientCanAccessPatient: that check admits doctors, because doctors
-     * must be able to read every patient's record. Registering a patient with a GP is an
-     * administrative decision rather than a clinical one, so it is deliberately narrower — and
-     * stating it here keeps the service in step with the endpoint's @PreAuthorize instead of
-     * quietly permitting more than the controller does.
-     */
+    // GP change is patient + admin only. Doctors are excluded - it's an administrative decision, not clinical.
     public void assertCanChangeGeneralPractitioner(Authentication authentication, Patient patient) {
         requireAuthentication(authentication);
         if (isAdmin(authentication)) {

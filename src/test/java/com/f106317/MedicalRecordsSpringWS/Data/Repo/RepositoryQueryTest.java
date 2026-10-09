@@ -608,6 +608,22 @@ class RepositoryQueryTest {
             assertTrue(auditLogRepository
                     .findEntityIdsByActionAndEntityType("NO_SUCH_ACTION", "Doctor").isEmpty());
         }
+
+        /**
+         * The audit screen's Prev / Next read totalPages and number off this, so the page metadata
+         * has to be right, not just the rows on it.
+         */
+        @Test
+        void pagedFeedReportsItsOwnBounds() {
+            Page<AuditLog> first = auditLogRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 2));
+            assertEquals(3, first.getTotalElements());
+            assertEquals(2, first.getTotalPages());
+            assertTrue(first.hasNext());
+
+            Page<AuditLog> last = auditLogRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(1, 2));
+            assertEquals(1, last.getContent().size(), "the final page holds the remainder");
+            assertFalse(last.hasNext());
+        }
     }
 
     // ---------------------------------------------------------------- fixture helpers

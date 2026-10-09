@@ -20,12 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.List;
-import java.util.stream.Collectors;
 
-/**
- * Service layer for Doctor entity operations.
- * Handles CRUD, Keycloak identity mapping, and visit-count reporting.
- */
 @Service
 @RequiredArgsConstructor
 public class DoctorService {
@@ -37,21 +32,22 @@ public class DoctorService {
     private final AuditLogService auditLogService;
     private final KeycloakAdminService keycloakAdminService;
 
-    /** Retrieves all doctors and maps them to response DTOs. */
+    // Each doctor is tagged with its pending/approved status from the audit log.
     @Transactional(readOnly = true)
     public List<DoctorResponse> getAllDoctors() {
+        java.util.Set<Long> pending = auditLogService.findPendingDoctorIds();
         return doctorRepository.findAll().stream()
                 .map(DoctorResponse::fromEntity)
-                .collect(Collectors.toList());
+                .map(response -> response.withPending(pending.contains(response.id())))
+                .toList();
     }
 
-    /** Retrieves a single doctor by database ID. */
     @Transactional(readOnly = true)
     public DoctorResponse getDoctorById(Long id) {
-        return DoctorResponse.fromEntity(findDoctorById(id));
+        return DoctorResponse.fromEntity(findDoctorById(id))
+                .withPending(auditLogService.findPendingDoctorIds().contains(id));
     }
 
-    /** Creates a new doctor with optional specializations and Keycloak identity. */
     @Transactional
     public DoctorResponse createDoctor(DoctorRequest request, Authentication authentication) {
         Doctor doctor = new Doctor();
@@ -70,13 +66,7 @@ public class DoctorService {
         return DoctorResponse.fromEntity(saved);
     }
 
-    /**
-     * Registers the calling user as a doctor, pending administrator approval.
-     * WHAT: Binds the record to the caller's Keycloak subject and forces isGP to false.
-     * WHY: Identity must come from the verified token, and GP status decides whether a doctor appears
-     * in the directory patients pick their GP from — that is an administrator's call, not the applicant's.
-     * The DOCTOR realm role is granted separately, by an administrator calling approveDoctor.
-     */
+    // Self-registration: identity from JWT, GP flag forced to false (admin decides that).
     @Transactional
     public DoctorResponse selfRegister(DoctorSelfRegistrationRequest request, Authentication authentication) {
         String subject = authorizationService.extractSubject(authentication);
@@ -93,22 +83,13 @@ public class DoctorService {
         doctor.setFirstName(request.firstName());
         doctor.setLastName(request.lastName());
         doctor.setGP(false);
-        if (request.specializationIds() != null && !request.specializationIds().isEmpty()) {
-            List<Specialization> specs = specializationRepository.findAllById(request.specializationIds());
-            doctor.setSpecializations(new HashSet<>(specs));
-        }
         Doctor saved = doctorRepository.save(doctor);
         auditLogService.log(authentication, AuditLogService.ACTION_SELF_REGISTER,
                 AuditLogService.ENTITY_DOCTOR, saved.getId(), doctorLabel(saved));
         return DoctorResponse.fromEntity(saved);
     }
 
-    /**
-     * Lists doctors who registered themselves and are still awaiting approval.
-     * WHY: resolves each audit entry to the doctor it refers to, so an administrator sees a name
-     * rather than an entity id. Records deleted since registering are skipped rather than shown
-     * as a dangling row.
-     */
+    // Resolves pending audit entries to doctor records. Skips deleted ones.
     @Transactional(readOnly = true)
     public List<PendingDoctorResponse> getPendingRegistrations() {
         return auditLogService.findPendingDoctorRegistrations().stream()
@@ -120,18 +101,10 @@ public class DoctorService {
                                 log.getCreatedAt()))
                         .orElse(null))
                 .filter(java.util.Objects::nonNull)
-                .collect(Collectors.toList());
+                .toList();
     }
 
-    /**
-     * Approves a self-registered doctor by granting them the DOCTOR realm role in Keycloak.
-     * WHY: previously an administrator had to leave the application and assign the role by hand in
-     * the Keycloak console, and nothing recorded that they had done so — which is why the pending
-     * list could never empty. The APPROVE_DOCTOR entry written here is what clears it.
-     * <p>
-     * Unlike self-registration, a Keycloak failure propagates: the caller asked for the role to be
-     * granted, so silently continuing would report success for something that did not happen.
-     */
+    // Grants DOCTOR role in Keycloak. Propagates failure (unlike best-effort grants elsewhere).
     @Transactional
     public DoctorResponse approveDoctor(Long id, Authentication authentication) {
         Doctor doctor = findDoctorById(id);
@@ -142,13 +115,14 @@ public class DoctorService {
         keycloakAdminService.assignRealmRole(doctor.getKeycloakId(), "DOCTOR");
         auditLogService.log(authentication, AuditLogService.ACTION_APPROVE_DOCTOR,
                 AuditLogService.ENTITY_DOCTOR, doctor.getId(), doctorLabel(doctor));
-        return DoctorResponse.fromEntity(doctor);
+        return DoctorResponse.fromEntity(doctor).withPending(false);
     }
 
-    /** Updates an existing doctor's details and specializations. */
+    // Saving a pending doctor also logs approval, so the audit log matches the role grant.
     @Transactional
     public DoctorResponse updateDoctor(Long id, DoctorRequest request, Authentication authentication) {
         Doctor doctor = findDoctorById(id);
+        boolean wasPending = auditLogService.findPendingDoctorIds().contains(id);
         doctor.setFirstName(request.firstName());
         doctor.setLastName(request.lastName());
         doctor.setGP(request.isGP());
@@ -159,15 +133,17 @@ public class DoctorService {
         }
         Doctor saved = doctorRepository.save(doctor);
         auditLogService.log(authentication, "UPDATE", "Doctor", saved.getId(), doctorLabel(saved));
-        return DoctorResponse.fromEntity(saved);
+
+        boolean approvedHere = wasPending
+                && saved.getKeycloakId() != null && !saved.getKeycloakId().isBlank();
+        if (approvedHere) {
+            auditLogService.log(authentication, AuditLogService.ACTION_APPROVE_DOCTOR,
+                    AuditLogService.ENTITY_DOCTOR, saved.getId(), doctorLabel(saved));
+        }
+        return DoctorResponse.fromEntity(saved).withPending(wasPending && !approvedHere);
     }
 
-    /**
-     * Applies a change to which Keycloak account this record belongs to.
-     * WHAT: three states — an absent field leaves the link alone, an empty one clears it, a value
-     * sets it. See {@code PatientService.applyAccountLink}; the reasoning is identical.
-     * The caller is responsible for revoking the previous holder's realm role.
-     */
+    // null = don't touch, empty = clear, value = set. Same logic as PatientService.
     private void applyAccountLink(Doctor doctor, String requestedKeycloakId) {
         if (requestedKeycloakId == null) {
             return;
@@ -176,17 +152,7 @@ public class DoctorService {
         doctor.setKeycloakId(trimmed.isEmpty() ? null : trimmed);
     }
 
-    /**
-     * Deletes a doctor, provided they have no recorded visits.
-     * WHY the guard: visit.doctor_id is declared ON DELETE CASCADE, so removing a doctor makes the
-     * database silently delete their visits — and, cascading further, the diagnoses, prescriptions
-     * and sick leaves hanging off them. That erases patient medical history as a side effect of a
-     * staff record being removed, which contradicts the requirement to track each patient's
-     * history. The records describe the patient, not the practitioner, so we refuse instead.
-     * <p>
-     * Contrast with the GP relationship, which the schema already handles correctly: deleting a
-     * doctor merely sets patient.gp_doctor_id to NULL rather than deleting the patients.
-     */
+    // Refuses if the doctor has visits - deleting would cascade-delete patients' medical history.
     @Transactional
     public void deleteDoctor(Long id, Authentication authentication) {
         Doctor doctor = findDoctorById(id);
@@ -201,27 +167,26 @@ public class DoctorService {
         auditLogService.log(authentication, "DELETE", "Doctor", id, doctorLabel(doctor));
     }
 
-    /** Report: retrieves all doctors with their total visit counts, ordered descending. */
+    // Pending doctors are excluded - they have no role and zero visits.
     @Transactional(readOnly = true)
     public List<ReportDTO.DoctorVisitCount> getDoctorsWithVisitCount() {
+        java.util.Set<Long> pending = auditLogService.findPendingDoctorIds();
         return doctorRepository.findDoctorsWithVisitCount().stream()
-                .collect(Collectors.toList());
+                .filter(row -> !pending.contains(row.doctorId()))
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public List<ReportDTO.GpDoctorPatientCount> getGpDoctorPatientCounts() {
-        return doctorRepository.findGpDoctorsWithPatientCount().stream()
-                .collect(Collectors.toList());
+        return doctorRepository.findGpDoctorsWithPatientCount();
     }
 
-    /** Whether a doctor record is already bound to this Keycloak subject. */
     @Transactional(readOnly = true)
     public boolean hasProfileFor(String keycloakId) {
         return keycloakId != null && !keycloakId.isBlank()
                 && doctorRepository.findByKeycloakId(keycloakId).isPresent();
     }
 
-    /** Looks up a doctor by their Keycloak Identity Provider UUID. */
     @Transactional(readOnly = true)
     public DoctorResponse getDoctorByKeycloakId(String keycloakId) {
         Doctor doctor = doctorRepository.findByKeycloakId(keycloakId)
@@ -229,25 +194,54 @@ public class DoctorService {
         return DoctorResponse.fromEntity(doctor);
     }
 
-    /** Retrieves all available specializations. */
     @Transactional(readOnly = true)
     public List<SpecializationResponse> getAllSpecializations() {
         return specializationRepository.findAll().stream()
                 .map(SpecializationResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
-    /** Creates a new specialization (Admin only). */
     @Transactional
-    public SpecializationResponse createSpecialization(SpecializationRequest request) {
+    public SpecializationResponse createSpecialization(SpecializationRequest request,
+                                                       Authentication authentication) {
         Specialization spec = new Specialization();
         spec.setName(request.name().trim());
         Specialization saved = specializationRepository.save(spec);
+        auditLogService.log(authentication, "CREATE", "Specialization", saved.getId(), saved.getName());
         return SpecializationResponse.fromEntity(saved);
     }
 
-    /** Internal helper: finds a Doctor entity or throws ResourceNotFoundException. */
-    /** Label used in the audit trail, e.g. "Dr. Georgi Ivanov". */
+    @Transactional
+    public SpecializationResponse updateSpecialization(Long id, SpecializationRequest request,
+                                                       Authentication authentication) {
+        Specialization spec = findSpecializationById(id);
+        spec.setName(request.name().trim());
+        Specialization saved = specializationRepository.save(spec);
+        auditLogService.log(authentication, "UPDATE", "Specialization", saved.getId(), saved.getName());
+        return SpecializationResponse.fromEntity(saved);
+    }
+
+    // Removes the specialization from all doctors who hold it, then deletes it.
+    @Transactional
+    public void deleteSpecialization(Long id, Authentication authentication) {
+        Specialization spec = findSpecializationById(id);
+        String name = spec.getName();
+        List<Doctor> holders = doctorRepository.findAll().stream()
+                .filter(doctor -> doctor.getSpecializations() != null
+                        && doctor.getSpecializations().removeIf(held -> held.getId().equals(id)))
+                .toList();
+        doctorRepository.saveAll(holders);
+        specializationRepository.delete(spec);
+        auditLogService.log(authentication, "DELETE", "Specialization", id,
+                holders.isEmpty() ? name : name + " - removed from " + holders.size() + " doctor(s)");
+    }
+
+    private Specialization findSpecializationById(Long id) {
+        return specializationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Specialization not found with id: " + id));
+    }
+
+    // Used for audit trail
     private static String doctorLabel(Doctor doctor) {
         return "Dr. " + doctor.getFirstName() + " " + doctor.getLastName();
     }

@@ -7,11 +7,6 @@ import jakarta.validation.constraints.Size;
 
 import java.util.Set;
 
-/**
- * Administrator-facing payload for creating or updating a doctor.
- * Applicants registering themselves use {@link DoctorSelfRegistrationRequest}, which can set
- * neither keycloakId nor isGP.
- */
 public record DoctorRequest(
         @Size(max = 36, message = "Keycloak ID cannot exceed 36 characters")
         String keycloakId,
@@ -25,13 +20,10 @@ public record DoctorRequest(
         @NotNull(message = "Specialization IDs are required")
         Set<Long> specializationIds,
 
-        // See PatientRequest: optional, and optional on purpose. A blank username records a doctor
-        // with no portal access; supplying one creates the Keycloak account and returns a one-time
-        // password for the administrator to hand over.
+        // Optional: providing a username creates a Keycloak account with a one-time password.
         @Size(max = 255, message = "Username cannot exceed 255 characters")
         String username
 ) {
-    /** Copy of this request bound to a Keycloak account the application has just created. */
     public DoctorRequest withKeycloakId(String newKeycloakId) {
         return new DoctorRequest(newKeycloakId, firstName, lastName, isGP, specializationIds, username);
     }

@@ -18,6 +18,7 @@ public class AuditLogController {
 
     private final AuditLogService auditLogService;
 
+    // Paginated audit feed, newest first.
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Page<AuditLogResponse>> getAuditLogs(

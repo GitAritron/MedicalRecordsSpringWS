@@ -11,11 +11,7 @@ public record PatientResponse(
         Long gpDoctorId,
         String gpDoctorName,
 
-        /**
-         * Set only on the response to a request that created or reset a Keycloak account, so the
-         * administrator can pass it on. Never persisted and never populated by {@link #fromEntity},
-         * so ordinary reads always carry null.
-         */
+        // Only set when a Keycloak account was just created. Null on normal reads.
         String temporaryPassword
 ) {
     public static PatientResponse fromEntity(Patient patient) {
@@ -35,7 +31,6 @@ public record PatientResponse(
         );
     }
 
-    /** Copy of this response carrying a freshly issued one-time password. */
     public PatientResponse withTemporaryPassword(String password) {
         return new PatientResponse(id, keycloakId, egn, firstName, lastName,
                 gpDoctorId, gpDoctorName, password);

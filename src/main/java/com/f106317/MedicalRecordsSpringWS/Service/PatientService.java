@@ -13,14 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Optional;
 
-/**
- * Service layer for Patient operations.
- * Handles the business logic for patient management, including security checks
- * to ensure that patients can only view their own data, while doctors and admins
- * have broader access.
- */
 @Service
 @RequiredArgsConstructor
 public class PatientService {
@@ -30,27 +24,17 @@ public class PatientService {
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
 
-    /**
-     * Retrieves all patients.
-     * WHY: Used by Admins to view the global directory of patients.
-     */
     @Transactional(readOnly = true)
     public List<PatientResponse> getAllPatients() {
         return patientRepository.findAll().stream()
                 .map(PatientResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
-    /**
-     * Retrieves a patient by their Keycloak Identity Provider UUID.
-     * WHAT: Maps the external Keycloak token to the internal database record.
-     * WHY: Ensures we securely fetch the logged-in user's data without relying on insecure sequential IDs.
-     */
+    // Maps a Keycloak UUID to the internal patient record.
     @Transactional(readOnly = true)
     public PatientResponse getPatientByKeycloakId(String keycloakId, Authentication authentication) {
-        // Fails closed: anyone who is not staff must be asking for their own profile. The previous
-        // form guarded on isPatient(...), which returns false for an absent or role-less token and
-        // therefore skipped the ownership check entirely instead of refusing.
+        // Non-staff callers can only fetch their own profile.
         if (!authorizationService.isAdmin(authentication) && !authorizationService.isDoctor(authentication)) {
             String subject = authorizationService.extractSubject(authentication);
             if (subject == null || !subject.equals(keycloakId)) {
@@ -62,11 +46,6 @@ public class PatientService {
         return PatientResponse.fromEntity(patient);
     }
 
-    /**
-     * Retrieves a single patient by their database ID, performing authorization checks.
-     * WHY: Doctors need to view specific patient profiles by ID. We assert that a Patient
-     * cannot spoof this ID to view someone else's record.
-     */
     @Transactional(readOnly = true)
     public PatientResponse getPatientById(Long id, Authentication authentication) {
         Patient patient = findPatientById(id);
@@ -74,11 +53,6 @@ public class PatientService {
         return PatientResponse.fromEntity(patient);
     }
 
-    /**
-     * Creates a new patient record in the database.
-     * WHAT: Maps the DTO to an Entity and validates the assigned General Practitioner (GP).
-     * WHY: Patients must have a valid GP assigned at registration according to the requirements.
-     */
     @Transactional
     public PatientResponse createPatient(PatientRequest request, Authentication authentication) {
         Patient patient = new Patient();
@@ -94,26 +68,22 @@ public class PatientService {
         return PatientResponse.fromEntity(saved);
     }
 
-    /**
-     * Registers the calling user as a patient.
-     * WHAT: Binds the new record to the Keycloak subject read from the verified token.
-     * WHY: The identity must never come from the request body — otherwise any authenticated user
-     * could create a profile bound to another person's account.
-     */
+    public record SelfRegistration(PatientResponse patient, boolean created) {}
+
+    // Identity comes from the JWT, not the request body.
     @Transactional
-    public PatientResponse selfRegister(PatientSelfRegistrationRequest request, Authentication authentication) {
+    public SelfRegistration selfRegister(PatientSelfRegistrationRequest request, Authentication authentication) {
         String subject = authorizationService.extractSubject(authentication);
         if (subject == null || subject.isBlank()) {
             throw new org.springframework.security.access.AccessDeniedException(
                     "An authenticated identity is required to self-register");
         }
-        if (patientRepository.findByKeycloakId(subject).isPresent()) {
-            throw new IllegalArgumentException("A patient profile already exists for this account");
+        // If already registered, return the existing record (idempotent).
+        Optional<Patient> existing = patientRepository.findByKeycloakId(subject);
+        if (existing.isPresent()) {
+            return new SelfRegistration(PatientResponse.fromEntity(existing.get()), false);
         }
-        // Checked here rather than left to the EGN unique constraint: the constraint violation
-        // surfaces as a generic "duplicate or constraint violation" 409, which tells someone whose
-        // record an administrator already entered nothing about how to proceed. This is the common
-        // case, not an edge one, and the way out is a link rather than a second record.
+        // Explicit check so the user gets a helpful message instead of a generic constraint violation.
         if (patientRepository.existsByEgn(request.egn())) {
             throw new IllegalArgumentException(
                     "A patient record with this EGN already exists. "
@@ -128,13 +98,9 @@ public class PatientService {
         patient.setGp(resolveGpDoctor(request.gpDoctorId()));
         Patient saved = patientRepository.save(patient);
         auditLogService.log(authentication, "SELF_REGISTER", "Patient", saved.getId(), patientLabel(saved));
-        return PatientResponse.fromEntity(saved);
+        return new SelfRegistration(PatientResponse.fromEntity(saved), true);
     }
 
-    /**
-     * Updates an existing patient's details.
-     * EGN is immutable after creation — attempting to change it will throw IllegalArgumentException.
-     */
     @Transactional
     public PatientResponse updatePatient(Long id, PatientRequest request, Authentication authentication) {
         Patient patient = findPatientById(id);
@@ -153,15 +119,7 @@ public class PatientService {
         return PatientResponse.fromEntity(saved);
     }
 
-    /**
-     * Applies a change to which Keycloak account this record belongs to.
-     * WHAT: three states, because the field being absent and the field being empty mean different
-     * things — absent leaves the link alone, empty clears it, a value sets it.
-     * WHY the distinction: the administrator's form always sends the field, prefilled with the
-     * current value, so an empty box there is a deliberate unlink. An API caller sending a partial
-     * body omits the field entirely, and must not have the link silently torn out from under them.
-     * The caller is responsible for revoking the previous holder's realm role.
-     */
+    // null = don't touch the link, empty = clear it, value = set it.
     private void applyAccountLink(Patient patient, String requestedKeycloakId) {
         if (requestedKeycloakId == null) {
             return;
@@ -170,9 +128,6 @@ public class PatientService {
         patient.setKeycloakId(trimmed.isEmpty() ? null : trimmed);
     }
 
-    /**
-     * Deletes a patient by ID.
-     */
     @Transactional
     public void deletePatient(Long id, Authentication authentication) {
         Patient patient = findPatientById(id);
@@ -180,11 +135,7 @@ public class PatientService {
         auditLogService.log(authentication, "DELETE", "Patient", id, patientLabel(patient));
     }
 
-    /**
-     * Updates a patient's assigned General Practitioner.
-     * Patients can update their own GP and administrators can update anyone's. Doctors cannot:
-     * registering a patient with a GP is an administrative decision, not a clinical one.
-     */
+    // Only the patient themselves or an admin can change GP. Doctors cannot.
     @Transactional
     public PatientResponse updatePatientGp(Long patientId, Long gpDoctorId, Authentication authentication) {
         Patient patient = findPatientById(patientId);
@@ -197,25 +148,19 @@ public class PatientService {
         return PatientResponse.fromEntity(saved);
     }
 
-    /** Whether a patient record is already bound to this Keycloak subject. */
     @Transactional(readOnly = true)
     public boolean hasProfileFor(String keycloakId) {
         return keycloakId != null && !keycloakId.isBlank()
                 && patientRepository.findByKeycloakId(keycloakId).isPresent();
     }
 
-    /**
-     * Retrieves all patients assigned to a specific General Practitioner.
-     * WHY: Supports the "My Patients" functionality for logged-in doctors.
-     */
     @Transactional(readOnly = true)
     public List<PatientResponse> getPatientsByGp(Long gpId) {
         return patientRepository.findByGpId(gpId).stream()
                 .map(PatientResponse::fromEntity)
-                .collect(Collectors.toList());
+                .toList();
     }
 
-    /** Label used in the audit trail, e.g. "Ivan Dimitrov". */
     private static String patientLabel(Patient patient) {
         return patient.getFirstName() + " " + patient.getLastName();
     }
@@ -225,19 +170,7 @@ public class PatientService {
                 .orElseThrow(() -> new ResourceNotFoundException("Patient not found with id: " + id));
     }
 
-    /**
-     * Resolves the GP a patient is being registered with - or none.
-     * <p>
-     * WHY a missing GP is allowed: the specification expects every patient to be registered with a
-     * GP, and that is the normal state here, but enforcing it as a hard rule would cost more than it
-     * protects. A GP who leaves the practice would either have to be undeletable or take their
-     * patients' medical records with them. Instead patient.gp_doctor_id is nullable and
-     * ON DELETE SET NULL: the records survive, and the patient is without a GP until one is chosen
-     * again - which a patient may do for themselves through updatePatientGp.
-     * <p>
-     * WHY the isGP check: an id that is given must name a doctor who actually practises as a GP,
-     * not merely any doctor.
-     */
+    // GP is optional (nullable FK). If provided, must actually be a GP doctor.
     private com.f106317.MedicalRecordsSpringWS.Data.Entity.Doctor resolveGpDoctor(Long doctorId) {
         if (doctorId == null) {
             return null;

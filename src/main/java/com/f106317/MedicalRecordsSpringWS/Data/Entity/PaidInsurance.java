@@ -13,18 +13,10 @@ import lombok.Setter;
 
 import java.time.LocalDate;
 
-/**
- * One month of paid health insurance for one patient.
- * WHY two dates: {@code insuranceDate} is the month being covered, {@code paidOn} is when the money
- * actually arrived. Paying three months late still covers the correct months, so the continuous-cover
- * check must read the former and never the latter.
- */
+// insuranceDate = month being covered, paidOn = when money arrived. Coverage check uses only insuranceDate.
 @Entity
 @Table(name = "paid_insurance",
-        // Mirrors init.sql. Hibernate ignores this under ddl-auto: validate, but the test schema is
-        // generated from these entities — without it the rule is unenforced and untestable there.
-        // No separate index on (patient_id, insurance_date): MySQL backs the unique constraint with
-        // one over exactly those columns in that order, so a second would be maintained for nothing.
+        // One payment per patient per month. Unique constraint also serves as the index.
         uniqueConstraints = @UniqueConstraint(
                 name = "uq_patient_insurance_date",
                 columnNames = {"patient_id", "insurance_date"}))

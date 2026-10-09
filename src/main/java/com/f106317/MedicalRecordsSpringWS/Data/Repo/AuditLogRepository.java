@@ -17,10 +17,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
 
     List<AuditLog> findByActionAndEntityTypeOrderByCreatedAtDesc(String action, String entityType);
 
-    /**
-     * WHY: lets a caller subtract one action from another — for example, self-registrations that
-     * have not yet been approved — without loading whole audit rows just to read their entity id.
-     */
+    // Returns just entity IDs for a given action+type, used for the pending-registrations subtraction.
     @Query("SELECT DISTINCT a.entityId FROM AuditLog a WHERE a.action = :action AND a.entityType = :entityType")
     Set<Long> findEntityIdsByActionAndEntityType(@Param("action") String action,
                                                  @Param("entityType") String entityType);

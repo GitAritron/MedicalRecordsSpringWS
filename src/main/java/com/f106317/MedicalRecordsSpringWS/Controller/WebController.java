@@ -5,16 +5,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 
-/**
- * Serves the single-page application's shell.
- * <p>
- * WHY it passes Keycloak settings into the template: the request for this page carries no bearer
- * token - the SPA only authenticates after it has loaded - so nothing user-specific can be rendered
- * here. What the server can usefully supply is deployment configuration, which would otherwise be
- * hardcoded in both index.html and app.js. The URL comes from app.keycloak.public-url, the same
- * property issuer-uri is built from, so the page and the token check cannot disagree about where
- * Keycloak lives.
- */
+// Injects Keycloak config into the SPA shell so it's not hardcoded in JS.
 @Controller
 public class WebController {
 

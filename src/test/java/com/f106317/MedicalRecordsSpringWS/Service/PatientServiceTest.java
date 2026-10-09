@@ -283,16 +283,38 @@ class PatientServiceTest {
         assertEquals("kc-sub-123", saved.getValue().getKeycloakId());
     }
 
-    /** Verifies a second self-registration for the same account is rejected. */
+    /**
+     * A repeat self-registration returns the caller's own record instead of refusing.
+     *
+     * WHY this is not "creating a duplicate": no second record is written — the flag says the call
+     * created nothing, and the controller answers 200 rather than 201. The point is recovery: the
+     * record and the PATIENT role live in two systems and the grant is best-effort, so a user whose
+     * grant failed has a record and no role. Refusing here left them with nothing that could finish
+     * the job; repeating the request now does.
+     */
     @Test
-    void selfRegister_rejectsDuplicateProfile() {
+    void selfRegister_repeatReturnsTheCallersOwnRecordWithoutCreatingASecond() {
         PatientSelfRegistrationRequest request =
                 new PatientSelfRegistrationRequest("1234567890", "John", "Doe", null);
         when(patientRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.of(patient));
 
-        assertThrows(IllegalArgumentException.class,
-                () -> patientService.selfRegister(request, TestAuth.patient("kc-sub-123")));
+        PatientService.SelfRegistration outcome =
+                patientService.selfRegister(request, TestAuth.patient("kc-sub-123"));
+
+        assertFalse(outcome.created(), "a repeat must not report itself as a creation");
+        assertEquals(patient.getId(), outcome.patient().id());
         verify(patientRepository, never()).save(any());
+    }
+
+    /** A first registration reports itself as one, so the controller answers 201. */
+    @Test
+    void selfRegister_firstCallReportsItselfAsACreation() {
+        PatientSelfRegistrationRequest request =
+                new PatientSelfRegistrationRequest("1234567890", "John", "Doe", null);
+        when(patientRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.empty());
+        when(patientRepository.save(any(Patient.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertTrue(patientService.selfRegister(request, TestAuth.patient("kc-sub-123")).created());
     }
 
     /** Verifies self-registration refuses to proceed without an authenticated identity. */
