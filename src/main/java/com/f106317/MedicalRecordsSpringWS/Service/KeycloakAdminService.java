@@ -84,7 +84,7 @@ public class KeycloakAdminService {
                 log.error("Failed to {} role '{}' for user '{}': {}", verb, roleName, userId, response.getStatusCode());
                 throw new KeycloakIntegrationException("Failed to " + verb + " Keycloak role: " + response.getStatusCode());
             }
-        } catch (RuntimeException e) {
+        } catch (KeycloakIntegrationException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error trying to {} Keycloak role '{}' for user '{}': {}", verb, roleName, userId, e.getMessage());
@@ -150,7 +150,7 @@ public class KeycloakAdminService {
         } catch (HttpClientErrorException.Conflict e) {
             throw new UsernameAlreadyExistsException(
                     "The username '" + username + "' is already taken in Keycloak");
-        } catch (RuntimeException e) {
+        } catch (KeycloakIntegrationException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error creating Keycloak user '{}': {}", username, e.getMessage());
@@ -180,7 +180,7 @@ public class KeycloakAdminService {
                 throw new KeycloakIntegrationException("Failed to reset Keycloak password: " + response.getStatusCode());
             }
             log.info("Reset password for Keycloak user '{}'", userId);
-        } catch (RuntimeException e) {
+        } catch (KeycloakIntegrationException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error resetting password for user '{}': {}", userId, e.getMessage());
@@ -209,7 +209,7 @@ public class KeycloakAdminService {
                 throw new KeycloakIntegrationException("Keycloak user " + userId + " has no username");
             }
             return username.asText();
-        } catch (RuntimeException e) {
+        } catch (KeycloakIntegrationException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error reading Keycloak user '{}': {}", userId, e.getMessage());
@@ -246,7 +246,7 @@ public class KeycloakAdminService {
                 return json.get("access_token").asText();
             }
             throw new KeycloakIntegrationException("Keycloak admin token request failed: " + response.getStatusCode());
-        } catch (RuntimeException e) {
+        } catch (KeycloakIntegrationException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error getting Keycloak admin token: {}", e.getMessage());
