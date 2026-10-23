@@ -17,18 +17,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * The SPA shell with Keycloak moved to another host.
- * <p>
- * Keycloak stamps a token's iss claim from the host the browser used to reach it, and the resource
- * server rejects any token whose iss differs from issuer-uri. So moving the browser-facing URL has
- * to move the issuer with it: the two tests below are one rule, seen from each side.
- * <p>
- * WHY a separate class rather than a @Nested one in WebControllerTest: a different property source
- * needs its own application context, and as a @Nested class that context came up without the web
- * security infrastructure (no HttpSecurity bean), so it could not build the test filter chain.
- * A top-level @WebMvcTest, set up like every other controller test here, does not have the problem.
- */
+// Keycloak on another host: the issuer must move with the public URL, since a token's iss is the host the browser used.
+// Own class, not @Nested in WebControllerTest - the new property needs its own context, and as @Nested it had no HttpSecurity bean.
 @WebMvcTest(WebController.class)
 @TestPropertySource(properties = "app.keycloak.public-url=http://kc.example:9000")
 class WebControllerKeycloakHostTest {

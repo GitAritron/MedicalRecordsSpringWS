@@ -17,13 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
-/**
- * The SPA shell is the one page every user loads before anything else, and it is where the
- * Keycloak adapter comes from - if these values fail to render, nobody can sign in at all.
- * These tests render the real Thymeleaf template, so they catch a broken expression, a renamed
- * model attribute or a missing property, not just the controller's return value.
- * WebControllerKeycloakHostTest covers the same page with Keycloak moved to another host.
- */
+// Renders the real Thymeleaf template - if the Keycloak values break here, nobody can sign in.
 @WebMvcTest(WebController.class)
 class WebControllerTest {
 
@@ -54,7 +48,6 @@ class WebControllerTest {
                 .andExpect(content().string(containsString("data-keycloak-client-id=\"frontend-client\"")));
     }
 
-    /** Refactoring the issuer into a derived value must not change what it resolves to by default. */
     @Test
     void defaultIssuerIsExactlyWhatItWasBefore() {
         assertEquals("http://localhost:8081/realms/medical-records",

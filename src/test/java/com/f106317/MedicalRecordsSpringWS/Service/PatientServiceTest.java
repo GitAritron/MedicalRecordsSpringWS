@@ -26,10 +26,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-/**
- * Unit tests for {@link PatientService}.
- * Verifies CRUD operations and GP-based queries with mocked repositories.
- */
 @ExtendWith(MockitoExtension.class)
 class PatientServiceTest {
 
@@ -39,8 +35,7 @@ class PatientServiceTest {
     @Mock
     private DoctorRepository doctorRepository;
 
-    // Real collaborator, not a mock. Mocking it away turned every ownership assertion into a
-    // no-op, which is why the tests below could not have caught an authorization regression.
+    // Real, not mocked - a mocked one makes every ownership assertion a no-op.
     @Spy
     private AuthorizationService authorizationService = new AuthorizationService();
 
@@ -69,14 +64,12 @@ class PatientServiceTest {
         patient.setGp(doctor);
     }
 
-    /** Verifies that all patients are retrieved and mapped to DTOs. */
     @Test
     void getAllPatients() {
         when(patientRepository.findAll()).thenReturn(Arrays.asList(patient));
         assertEquals(1, patientService.getAllPatients().size());
     }
 
-    /** Verifies successful retrieval of a patient by ID, including GP doctor name. */
     @Test
     void getPatientById_success() {
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
@@ -85,25 +78,25 @@ class PatientServiceTest {
         assertEquals("Dr. House MD", response.gpDoctorName());
     }
 
-    /** Verifies that ResourceNotFoundException is thrown for non-existent patient. */
     @Test
     void getPatientById_notFound() {
         when(patientRepository.findById(2L)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> patientService.getPatientById(2L, TestAuth.admin()));
     }
 
-    /** Verifies a patient is created with the correct GP association. */
     @Test
     void createPatient_success() {
-        PatientRequest request = new PatientRequest(null, "1234567890", "John", "Doe", 1L, null);
+        PatientRequest request = new PatientRequest(null, "8001156240", "Ivan", "Petrov", 1L, null);
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
-        when(patientRepository.save(any())).thenReturn(patient);
-        
+        when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
         PatientResponse response = patientService.createPatient(request, TestAuth.admin());
-        assertEquals("John", response.firstName());
+        assertEquals("Ivan", response.firstName());
+        assertEquals("Petrov", response.lastName());
+        assertEquals("8001156240", response.egn());
+        assertEquals(1L, response.gpDoctorId());
     }
 
-    /** Verifies that updating a patient changes the persisted fields. */
     @Test
     void updatePatient_success() {
         PatientRequest request = new PatientRequest(null, "1234567890", "Jane", "Smith", 1L, null);
@@ -116,7 +109,6 @@ class PatientServiceTest {
         assertEquals("1234567890", response.egn());
     }
 
-    /** Verifies successful deletion of an existing patient. */
     @Test
     void deletePatient_success() {
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
@@ -124,18 +116,28 @@ class PatientServiceTest {
         verify(patientRepository, times(1)).delete(any());
     }
 
+    // The patient starts on doctor 1 (setUp), so moving to doctor 2 proves the GP actually changed.
     @Test
     void updatePatientGp_success() {
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
-        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.findById(2L)).thenReturn(Optional.of(secondGp()));
         when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        PatientResponse res = patientService.updatePatientGp(1L, 1L, TestAuth.admin());
-        assertNotNull(res);
+        PatientResponse res = patientService.updatePatientGp(1L, 2L, TestAuth.admin());
+        assertEquals(2L, res.gpDoctorId());
+        assertEquals("Dr. Lisa Cuddy", res.gpDoctorName());
         verify(patientRepository, times(1)).save(any());
     }
 
-    /** Verifies that EGN cannot be changed on update. */
+    private static Doctor secondGp() {
+        Doctor gp = new Doctor();
+        gp.setId(2L);
+        gp.setFirstName("Lisa");
+        gp.setLastName("Cuddy");
+        gp.setGP(true);
+        return gp;
+    }
+
     @Test
     void updatePatient_egnImmutable() {
         PatientRequest request = new PatientRequest(null, "9999999999", "Jane", "Smith", 1L, null);
@@ -143,7 +145,6 @@ class PatientServiceTest {
         assertThrows(IllegalArgumentException.class, () -> patientService.updatePatient(1L, request, TestAuth.admin()));
     }
 
-    /** Verifies that a non-GP doctor cannot be assigned as GP. */
     @Test
     void createPatient_nonGpDoctor() {
         Doctor specialist = new Doctor();
@@ -154,7 +155,6 @@ class PatientServiceTest {
         assertThrows(IllegalArgumentException.class, () -> patientService.createPatient(request, TestAuth.admin()));
     }
 
-    /** Verifies retrieval of patients by their assigned GP doctor ID. */
     @Test
     void getPatientsByGp() {
         when(patientRepository.findByGpId(1L)).thenReturn(Arrays.asList(patient));
@@ -162,12 +162,10 @@ class PatientServiceTest {
     }
 
     // ──────────────────────────────────────────────
-    // Ownership rules (specification §2)
+    // Ownership rules
     // ──────────────────────────────────────────────
-    // These could not previously be tested: AuthorizationService was mocked, so every assertion
-    // it makes was a no-op and the tests passed regardless of the rules.
 
-    /** "Всеки пациент може да вижда собствената си история" — a patient may read their own record. */
+    // "Всеки пациент може да вижда собствената си история".
     @Test
     void getPatientById_patientCanReadOwnRecord() {
         patient.setKeycloakId("kc-patient-1");
@@ -177,7 +175,6 @@ class PatientServiceTest {
         assertEquals("John", response.firstName());
     }
 
-    /** ...and only their own: a different patient guessing the id must be refused. */
     @Test
     void getPatientById_patientCannotReadAnotherPatientsRecord() {
         patient.setKeycloakId("kc-patient-1");
@@ -187,7 +184,7 @@ class PatientServiceTest {
                 () -> patientService.getPatientById(1L, TestAuth.patient("kc-patient-2")));
     }
 
-    /** "Лекарите трябва да могат да виждат информацията за всички пациенти" — doctors read all. */
+    // "Лекарите трябва да могат да виждат информацията за всички пациенти".
     @Test
     void getPatientById_doctorCanReadAnyPatient() {
         patient.setKeycloakId("kc-patient-1");
@@ -197,15 +194,14 @@ class PatientServiceTest {
                 patientService.getPatientById(1L, TestAuth.doctor("kc-doctor-9")).firstName());
     }
 
-    /** A patient may choose their own general practitioner. */
     @Test
     void updatePatientGp_patientCanChangeTheirOwn() {
         patient.setKeycloakId("kc-patient-1");
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
-        when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
+        when(doctorRepository.findById(2L)).thenReturn(Optional.of(secondGp()));
         when(patientRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertNotNull(patientService.updatePatientGp(1L, 1L, TestAuth.patient("kc-patient-1")));
+        assertEquals(2L, patientService.updatePatientGp(1L, 2L, TestAuth.patient("kc-patient-1")).gpDoctorId());
     }
 
     @Test
@@ -218,12 +214,7 @@ class PatientServiceTest {
         verify(patientRepository, never()).save(any());
     }
 
-    /**
-     * Registering a patient with a GP is administrative, not clinical, so doctors are excluded —
-     * matching the endpoint's own rule. The general patient-access check permits doctors, which is
-     * why this operation uses a narrower one; without it the service would quietly allow more than
-     * the controller does.
-     */
+    // Changing GP is administrative, not clinical, so doctors are excluded - same as the endpoint rule.
     @Test
     void updatePatientGp_doctorCannotChangeGp() {
         patient.setKeycloakId("kc-patient-1");
@@ -241,11 +232,6 @@ class PatientServiceTest {
         verify(patientRepository, never()).findByKeycloakId(any());
     }
 
-    /**
-     * Regression guard for the fail-open guard this method used to carry: it keyed on
-     * isPatient(...), which is false for an absent token, so the ownership check was skipped
-     * entirely rather than refusing.
-     */
     @Test
     void getPatientByKeycloakId_refusesWithoutAuthentication() {
         assertThrows(AccessDeniedException.class,
@@ -253,7 +239,7 @@ class PatientServiceTest {
         verify(patientRepository, never()).findByKeycloakId(any());
     }
 
-    /** A token carrying no realm roles must not be treated as staff either. */
+    // A token with no realm roles is refused.
     @Test
     void getPatientByKeycloakId_refusesRolelessToken() {
         assertThrows(AccessDeniedException.class,
@@ -264,11 +250,7 @@ class PatientServiceTest {
     // Self-registration
     // ──────────────────────────────────────────────
 
-    /**
-     * Verifies self-registration binds the record to the caller's token subject.
-     * WHY: PatientSelfRegistrationRequest carries no keycloakId at all, so the only possible
-     * source is the verified token — a user cannot attach a profile to another account.
-     */
+    // The request has no keycloakId at all - the token is the only source.
     @Test
     void selfRegister_bindsToTokenSubject() {
         PatientSelfRegistrationRequest request =
@@ -283,15 +265,7 @@ class PatientServiceTest {
         assertEquals("kc-sub-123", saved.getValue().getKeycloakId());
     }
 
-    /**
-     * A repeat self-registration returns the caller's own record instead of refusing.
-     *
-     * WHY this is not "creating a duplicate": no second record is written — the flag says the call
-     * created nothing, and the controller answers 200 rather than 201. The point is recovery: the
-     * record and the PATIENT role live in two systems and the grant is best-effort, so a user whose
-     * grant failed has a record and no role. Refusing here left them with nothing that could finish
-     * the job; repeating the request now does.
-     */
+    // Repeating returns the existing record (200, nothing created). in case a user PATIENT grant fails.
     @Test
     void selfRegister_repeatReturnsTheCallersOwnRecordWithoutCreatingASecond() {
         PatientSelfRegistrationRequest request =
@@ -306,7 +280,6 @@ class PatientServiceTest {
         verify(patientRepository, never()).save(any());
     }
 
-    /** A first registration reports itself as one, so the controller answers 201. */
     @Test
     void selfRegister_firstCallReportsItselfAsACreation() {
         PatientSelfRegistrationRequest request =
@@ -317,7 +290,6 @@ class PatientServiceTest {
         assertTrue(patientService.selfRegister(request, TestAuth.patient("kc-sub-123")).created());
     }
 
-    /** Verifies self-registration refuses to proceed without an authenticated identity. */
     @Test
     void selfRegister_requiresAuthentication() {
         PatientSelfRegistrationRequest request =
@@ -327,12 +299,7 @@ class PatientServiceTest {
         verify(patientRepository, never()).save(any());
     }
 
-    /**
-     * Someone whose record an administrator already entered must be told what to do about it.
-     * WHY not left to the EGN unique constraint: that surfaces as a generic "duplicate or
-     * constraint violation" 409, which leaves them stuck with no role and no next step — the way
-     * out is an administrator linking the existing record, not a second one.
-     */
+    // Not left to the EGN unique constraint - a generic 409 leaves them stuck. The fix is an admin linking the existing record.
     @Test
     void selfRegister_whenEgnAlreadyRecorded_explainsHowToProceed() {
         PatientSelfRegistrationRequest request =
@@ -350,10 +317,8 @@ class PatientServiceTest {
     // ──────────────────────────────────────────────
     // Which Keycloak account a record belongs to
     // ──────────────────────────────────────────────
-    // Three states, because an absent field and an empty one mean different things. The
-    // administrator's form always sends the field, prefilled, so an empty box there is a
-    // deliberate unlink — while an API caller sending a partial body omits it entirely and must
-    // not have the link torn out from under them.
+    // An absent field leaves the link, an empty one unlinks, a value sets it.
+    // The admin form always sends the field, so empty there is a deliberate unlink. API callers may omit it.
 
     @Test
     void updatePatient_absentKeycloakId_leavesTheLinkAlone() {

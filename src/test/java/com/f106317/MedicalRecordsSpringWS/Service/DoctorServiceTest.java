@@ -33,12 +33,6 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-/**
- * Unit tests for {@link DoctorService}.
- * WHAT: Uses Mockito to isolate the Service layer from the database by mocking repositories.
- * WHY: We test the Service layer in isolation to ensure the business logic (mapping entities, 
- * throwing exceptions, calculating reports) works perfectly without relying on an actual MySQL connection.
- */
 @ExtendWith(MockitoExtension.class)
 class DoctorServiceTest {
 
@@ -57,8 +51,7 @@ class DoctorServiceTest {
     @Mock
     private VisitRepository visitRepository;
 
-    // Real collaborator, not a mock: extractSubject() has no dependencies, and self-registration
-    // tests are meaningless if the identity extraction they rely on is stubbed out.
+    // Real, not mocked - self-registration tests are pointless if extractSubject() is stubbed out.
     @Spy
     private AuthorizationService authorizationService = new AuthorizationService();
 
@@ -77,20 +70,12 @@ class DoctorServiceTest {
         doctor.setSpecializations(new HashSet<>());
     }
 
-    /** 
-     * WHAT: Verifies that all doctors are retrieved and mapped to DTOs. 
-     * WHY: Ensures the API doesn't leak raw database entities to the frontend.
-     */
     @Test
     void getAllDoctors() {
         when(doctorRepository.findAll()).thenReturn(Arrays.asList(doctor));
         assertEquals(1, doctorService.getAllDoctors().size());
     }
 
-    /** 
-     * WHAT: Verifies successful retrieval of a doctor by ID. 
-     * WHY: Ensures the `fromEntity` mapping works correctly for a valid database record.
-     */
     @Test
     void getDoctorById_success() {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
@@ -98,36 +83,23 @@ class DoctorServiceTest {
         assertEquals("John", response.firstName());
     }
 
-    /** 
-     * WHAT: Verifies that ResourceNotFoundException is thrown for a non-existent doctor. 
-     * WHY: We must guarantee that invalid IDs are caught and handled by our global exception 
-     * handler instead of causing an internal server error (500).
-     */
+    // Must reach the global handler as a 404, not a 500.
     @Test
     void getDoctorById_notFound() {
         when(doctorRepository.findById(2L)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> doctorService.getDoctorById(2L));
     }
 
-    /** 
-     * WHAT: Verifies that a doctor is successfully created from a DTO request. 
-     * WHY: Ensures the bidirectional data binding (setting the doctor on the entity) correctly 
-     * calls `save()` on the mock repository.
-     */
     @Test
     void createDoctor() {
-        DoctorRequest request = new DoctorRequest(null, "John", "Doe", true, Set.of(), null);
-        when(doctorRepository.save(any())).thenReturn(doctor);
+        DoctorRequest request = new DoctorRequest(null, "Gregory", "House", true, Set.of(), null);
+        when(doctorRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         DoctorResponse response = doctorService.createDoctor(request, TestAuth.admin());
-        assertNotNull(response);
-        assertEquals("John", response.firstName());
+        assertEquals("Gregory", response.firstName());
+        assertEquals("House", response.lastName());
+        assertTrue(response.isGP());
     }
 
-    /** 
-     * WHAT: Verifies that updating a doctor correctly applies the new fields. 
-     * WHY: Tests that the method fetches the existing doctor, mutates it, and saves it back 
-     * without creating a duplicate record.
-     */
     @Test
     void updateDoctor() {
         DoctorRequest request = new DoctorRequest(null, "Jane", "Smith", false, Set.of(), null);
@@ -137,10 +109,6 @@ class DoctorServiceTest {
         assertEquals("Jane", response.firstName());
     }
 
-    /** 
-     * WHAT: Verifies successful deletion of an existing doctor. 
-     * WHY: Validates that the service correctly checks for existence before calling delete.
-     */
     @Test
     void deleteDoctor_success() {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
@@ -149,22 +117,13 @@ class DoctorServiceTest {
         verify(doctorRepository, times(1)).delete(any());
     }
 
-    /** 
-     * WHAT: Verifies that deleting a non-existent doctor throws an exception. 
-     * WHY: Prevents the system from executing invalid DELETE SQL queries.
-     */
     @Test
     void deleteDoctor_notFound() {
         when(doctorRepository.findById(2L)).thenReturn(Optional.empty());
         assertThrows(ResourceNotFoundException.class, () -> doctorService.deleteDoctor(2L, TestAuth.admin()));
     }
 
-    /**
-     * WHAT: a doctor with recorded visits cannot be deleted.
-     * WHY: visit.doctor_id is ON DELETE CASCADE, so the database would remove their visits — and
-     * the diagnoses, prescriptions and sick leaves beneath them — as a side effect. That erases
-     * patient medical history, which belongs to the patient rather than the practitioner.
-     */
+    // visit.doctor_id is ON DELETE CASCADE - deleting would wipe the patients' medical history.
     @Test
     void deleteDoctor_refusedWhenDoctorHasVisits() {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
@@ -178,7 +137,6 @@ class DoctorServiceTest {
         verify(auditLogService, never()).log(any(), any(), any(), any(), any());
     }
 
-    /** A doctor who has never seen a patient carries no history, so deletion is allowed. */
     @Test
     void deleteDoctor_allowedWhenDoctorHasNoVisits() {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
@@ -190,12 +148,6 @@ class DoctorServiceTest {
         verify(auditLogService).log(any(), eq("DELETE"), eq("Doctor"), eq(1L), eq("Dr. John Doe"));
     }
 
-    /** 
-     * WHAT: Verifies the custom JPQL query execution for the visit count report. 
-     * WHY: the query now builds the DoctorVisitCount record itself through a JPQL constructor
-     * expression, so there is no Object[] to cast and a reordered SELECT clause fails at startup
-     * rather than throwing ClassCastException here.
-     */
     @Test
     void getDoctorsWithVisitCount() {
         when(doctorRepository.findDoctorsWithVisitCount())
@@ -212,11 +164,7 @@ class DoctorServiceTest {
     // Approval of self-registered doctors
     // ──────────────────────────────────────────────
 
-    /**
-     * WHAT: Approval grants the DOCTOR realm role and records that it happened.
-     * WHY: the APPROVE_DOCTOR audit entry is what removes the doctor from the pending list, so
-     * without it the administrator's banner would never clear.
-     */
+    // The APPROVE_DOCTOR entry is what clears the doctor from the pending banner.
     @Test
     void approveDoctor_grantsRoleAndRecordsApproval() {
         doctor.setKeycloakId("kc-doctor-1");
@@ -229,7 +177,6 @@ class DoctorServiceTest {
                 eq(AuditLogService.ENTITY_DOCTOR), eq(1L), eq("Dr. John Doe"));
     }
 
-    /** A record with no Keycloak account behind it cannot be approved. */
     @Test
     void approveDoctor_rejectsRecordWithoutKeycloakAccount() {
         doctor.setKeycloakId(null);
@@ -240,11 +187,7 @@ class DoctorServiceTest {
         verify(auditLogService, never()).log(any(), any(), any(), any(), any());
     }
 
-    /**
-     * WHAT: a Keycloak failure must surface rather than be swallowed.
-     * WHY: the administrator explicitly asked for the role to be granted. Reporting success while
-     * the role was never assigned would leave the doctor unable to sign in with no indication why.
-     */
+    // Must surface - otherwise the admin sees success while the doctor still can't sign in.
     @Test
     void approveDoctor_propagatesKeycloakFailure() {
         doctor.setKeycloakId("kc-doctor-1");
@@ -256,7 +199,6 @@ class DoctorServiceTest {
         verify(auditLogService, never()).log(any(), any(), any(), any(), any());
     }
 
-    /** Pending list resolves each audit entry to the doctor it names. */
     @Test
     void getPendingRegistrations_resolvesDoctorNames() {
         AuditLog entry = new AuditLog();
@@ -274,7 +216,6 @@ class DoctorServiceTest {
         assertEquals(1L, pending.get(0).doctorId());
     }
 
-    /** An entry whose doctor has since been deleted is skipped, not surfaced as a dangling row. */
     @Test
     void getPendingRegistrations_skipsDeletedDoctors() {
         AuditLog entry = new AuditLog();
@@ -290,15 +231,11 @@ class DoctorServiceTest {
     // Self-registration
     // ──────────────────────────────────────────────
 
-    /**
-     * WHAT: Verifies self-registration binds the record to the caller's JWT subject.
-     * WHY: The identity must come from the verified token, never from the request body,
-     * so a user cannot create a doctor profile attached to someone else's account.
-     */
+    // Identity comes from the token, never the body - otherwise you could claim someone else's account.
     @Test
     void selfRegister_bindsToTokenSubject() {
         DoctorSelfRegistrationRequest request =
-                new DoctorSelfRegistrationRequest("Ivan", "Petrov", new HashSet<>());
+                new DoctorSelfRegistrationRequest("Ivan", "Petrov");
         when(doctorRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.empty());
         when(doctorRepository.save(any(Doctor.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -309,15 +246,11 @@ class DoctorServiceTest {
         assertEquals("kc-sub-123", saved.getValue().getKeycloakId());
     }
 
-    /**
-     * WHAT: Verifies an applicant cannot register themselves as a General Practitioner.
-     * WHY: GP status decides who appears in the directory patients pick their GP from,
-     * so it is an administrator's decision, not the applicant's.
-     */
+    // GP status decides who shows up in the GP directory, so only an admin can grant it.
     @Test
     void selfRegister_cannotClaimGpStatus() {
         DoctorSelfRegistrationRequest request =
-                new DoctorSelfRegistrationRequest("Ivan", "Petrov", new HashSet<>());
+                new DoctorSelfRegistrationRequest("Ivan", "Petrov");
         when(doctorRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.empty());
         when(doctorRepository.save(any(Doctor.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -326,11 +259,10 @@ class DoctorServiceTest {
         assertFalse(response.isGP(), "self-registered doctors must not be GPs until an admin grants it");
     }
 
-    /** WHAT: Verifies a second self-registration for the same account is rejected. */
     @Test
     void selfRegister_rejectsDuplicateProfile() {
         DoctorSelfRegistrationRequest request =
-                new DoctorSelfRegistrationRequest("Ivan", "Petrov", new HashSet<>());
+                new DoctorSelfRegistrationRequest("Ivan", "Petrov");
         when(doctorRepository.findByKeycloakId("kc-sub-123")).thenReturn(Optional.of(doctor));
 
         assertThrows(IllegalArgumentException.class,
@@ -338,11 +270,10 @@ class DoctorServiceTest {
         verify(doctorRepository, never()).save(any());
     }
 
-    /** WHAT: Verifies self-registration refuses to proceed without an authenticated identity. */
     @Test
     void selfRegister_requiresAuthentication() {
         DoctorSelfRegistrationRequest request =
-                new DoctorSelfRegistrationRequest("Ivan", "Petrov", new HashSet<>());
+                new DoctorSelfRegistrationRequest("Ivan", "Petrov");
 
         assertThrows(AccessDeniedException.class, () -> doctorService.selfRegister(request, null));
         verify(doctorRepository, never()).save(any());
@@ -351,8 +282,7 @@ class DoctorServiceTest {
     // ──────────────────────────────────────────────
     // Which Keycloak account a record belongs to
     // ──────────────────────────────────────────────
-    // See PatientServiceTest for the reasoning: an absent field leaves the link alone, an empty
-    // one clears it, a value sets it.
+    // An absent field leaves the link, an empty one clears it, a value sets it.
 
     @Test
     void updateDoctor_absentKeycloakId_leavesTheLinkAlone() {
@@ -364,15 +294,7 @@ class DoctorServiceTest {
         assertEquals("kc-existing", doctorService.updateDoctor(1L, request, TestAuth.admin()).keycloakId());
     }
 
-    /**
-     * J1 regression: editing a pending applicant activated them without recording the approval.
-     *
-     * The controller grants the DOCTOR role on every save, and the README's workflow is to approve
-     * an applicant by editing them — that is the only step that can add specializations, which the
-     * Approve button does not take. So Edit → Save made a pending applicant active while the
-     * pending banner kept listing them, because "pending" is SELF_REGISTER minus APPROVE_DOCTOR and
-     * nothing had written the second. The approval must be recorded wherever the role is granted.
-     */
+    // Approving by Edit -> Save must also record APPROVE_DOCTOR, or the pending banner keeps them.
     @Test
     void updateDoctor_whenApplicantIsPending_recordsTheApproval() {
         doctor.setKeycloakId("kc-applicant");
@@ -388,7 +310,6 @@ class DoctorServiceTest {
         assertFalse(response.pending(), "the applicant is approved by this save");
     }
 
-    /** An ordinary edit of an already-approved doctor must not write a second approval. */
     @Test
     void updateDoctor_whenAlreadyApproved_recordsOnlyTheUpdate() {
         doctor.setKeycloakId("kc-existing");
@@ -403,10 +324,7 @@ class DoctorServiceTest {
                 any(), any(), any());
     }
 
-    /**
-     * A record with no Keycloak account cannot be approved — there is nothing to grant the role to,
-     * which is what approveDoctor refuses outright. Saving one must not claim otherwise.
-     */
+    // No Keycloak account means nothing to grant the role to - same rule as approveDoctor.
     @Test
     void updateDoctor_pendingWithNoAccount_staysPending() {
         doctor.setKeycloakId(null);
@@ -420,14 +338,7 @@ class DoctorServiceTest {
                 any(), any(), any());
     }
 
-    /**
-     * Deleting a specialization takes it off every doctor holding it rather than being refused.
-     *
-     * WHY that is the right choice: the specialization most likely to need deleting is a misspelt
-     * one, which is exactly the one already assigned. Refusing while anyone holds it would mean
-     * editing every doctor first just to reach the delete button. Only the join rows go — the
-     * doctors themselves survive, and a doctor with no specialization is a valid record.
-     */
+    // Removes it from holders instead of refusing - the one to delete is usually a misspelt one already assigned.
     @Test
     void deleteSpecialization_removesItFromTheDoctorsHoldingIt() {
         Specialization cardiology = new Specialization();
@@ -456,7 +367,6 @@ class DoctorServiceTest {
         verify(auditLogService).log(any(), eq("DELETE"), eq("Specialization"), eq(5L), any());
     }
 
-    /** The doctor list must say which entries are applications, not present them as staff. */
     @Test
     void getAllDoctors_marksPendingApplicants() {
         when(doctorRepository.findAll()).thenReturn(List.of(doctor));
@@ -465,7 +375,7 @@ class DoctorServiceTest {
         assertTrue(doctorService.getAllDoctors().get(0).pending());
     }
 
-    /** Report e lists staff. An applicant holds no DOCTOR role, so their count is always zero. */
+    // Report E lists staff only. Applicants hold no DOCTOR role.
     @Test
     void getDoctorsWithVisitCount_leavesOutPendingApplicants() {
         when(doctorRepository.findDoctorsWithVisitCount()).thenReturn(List.of(

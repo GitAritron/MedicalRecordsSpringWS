@@ -24,10 +24,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * Web layer tests for {@link PatientController}.
- * Tests CRUD endpoints and insurance verification with mocked security.
- */
+// Permit-all security - @WithMockUser roles aren't enforced here, see EndpointAuthorizationMatrixTest.
 @WebMvcTest(PatientController.class)
 class PatientControllerTest {
 
@@ -53,12 +50,7 @@ class PatientControllerTest {
     @MockitoBean
     private com.f106317.MedicalRecordsSpringWS.Service.AccountProvisioningService accountProvisioning;
 
-    /**
-     * These tests are about routing, authorization and response shape — not about Keycloak.
-     * The write paths ask the provisioning service whether an account was created, and a bare mock
-     * answers null, so the default here is "no account was asked for". Individual tests override it
-     * when the provisioning outcome is the thing under test.
-     */
+    // Not about Keycloak - default to "no account was asked for" (overwritten if the provisioning outcome is being tested), since a bare mock returns null.
     @org.junit.jupiter.api.BeforeEach
     void stubAccountProvisioning() {
         when(accountProvisioning.provisionIfRequested(any(), any(), any(), any(), any()))
@@ -70,7 +62,6 @@ class PatientControllerTest {
 
     private final PatientResponse samplePatient = new PatientResponse(1L, null, "1234567890", "John", "Doe", 1L, "Dr. House MD", null);
 
-    /** Verifies GET /api/patients returns a list of patients for ADMIN users. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getAllPatients() throws Exception {
@@ -80,7 +71,6 @@ class PatientControllerTest {
                 .andExpect(jsonPath("$[0].firstName").value("John"));
     }
 
-    /** Verifies GET /api/patients/{id} returns a single patient for PATIENT users. */
     @Test
     @WithMockUser(roles = "PATIENT")
     void getPatientById() throws Exception {
@@ -90,7 +80,6 @@ class PatientControllerTest {
                 .andExpect(jsonPath("$.firstName").value("John"));
     }
 
-    /** Verifies POST /api/patients creates a patient and returns 201 Created. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void createPatient() throws Exception {
@@ -102,7 +91,6 @@ class PatientControllerTest {
                 .andExpect(status().isCreated());
     }
 
-    /** Verifies PUT /api/patients/{id} updates a patient and returns 200 OK. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void updatePatient() throws Exception {
@@ -114,7 +102,6 @@ class PatientControllerTest {
                 .andExpect(status().isOk());
     }
 
-    /** Verifies DELETE /api/patients/{id} returns 204 No Content. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void deletePatient() throws Exception {
@@ -122,13 +109,10 @@ class PatientControllerTest {
                 .andExpect(status().isNoContent());
     }
 
-    /** Verifies GET /api/patients/{id}/insurance returns insurance status. */
     @Test
     @WithMockUser(roles = "PATIENT")
     void checkInsurance() throws Exception {
-        // The endpoint reports the month count alongside the verdict rather than a bare boolean:
-        // "not insured" alone does not distinguish a patient who missed one month from one who has
-        // never paid, and the specification asks for a справка someone reads and acts on.
+        // Month count, not just a boolean - "not insured" alone can't tell one missed month from never paid.
         when(insuranceService.getStatus(1L)).thenReturn(
                 new com.f106317.MedicalRecordsSpringWS.DTO.InsuranceStatusResponse(true, List.of()));
         mockMvc.perform(get("/api/patients/1/insurance"))
@@ -137,7 +121,6 @@ class PatientControllerTest {
                 .andExpect(jsonPath("$.unpaidMonths").isEmpty());
     }
 
-    /** A patient one month short is not insured, and the response says by how much. */
     @Test
     @WithMockUser(roles = "PATIENT")
     void checkInsurance_reportsHowFarShortCoverageFalls() throws Exception {

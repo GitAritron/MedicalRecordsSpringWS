@@ -92,13 +92,7 @@ class GlobalExceptionHandlerTest {
         assertEquals("MALFORMED_REQUEST", response.getBody().code());
     }
 
-    /**
-     * A missing static file must be a 404, not a 500.
-     * WHY: Spring raises NoResourceFoundException for anything the resource handler cannot
-     * resolve — /favicon.ico, a mistyped .js or .css path. Without a dedicated handler it fell
-     * through to the catch-all and every ordinary 404 was reported as an internal server error
-     * with a stack trace in the log.
-     */
+    // Missing static files (favicon, a mistyped .js) used to fall through to the catch-all as a 500.
     @Test
     void handleNoResourceFound_returns404() {
         HttpServletRequest request = new MockHttpServletRequest("GET", "/missing.js");
@@ -111,12 +105,7 @@ class GlobalExceptionHandlerTest {
         assertEquals("RESOURCE_NOT_FOUND", response.getBody().code());
     }
 
-    /**
-     * A lost-update rejection must be a 409, not a 500.
-     * WHY: @Version on BaseEntity makes Hibernate refuse the second of two interleaved writes, so
-     * one edit cannot silently erase the other. That refusal is the mechanism working, not a
-     * server fault — reported as 500 it told the user nothing and logged as an internal error.
-     */
+    // @Version refusing a lost update is the mechanism working, not a server fault.
     @Test
     void handleOptimisticLockingFailure_returns409() {
         OptimisticLockingFailureException ex =
@@ -133,11 +122,7 @@ class GlobalExceptionHandlerTest {
                 "the message must tell the user what to do about it");
     }
 
-    /**
-     * Spring wraps Hibernate's OptimisticLockException as ObjectOptimisticLockingFailureException,
-     * which is what actually reaches the handler at runtime. Catching the broader Spring type is
-     * what makes that work — this pins it so a narrower catch cannot creep back in.
-     */
+    // Spring wraps Hibernate's exception as ObjectOptimisticLockingFailureException - that's what actually arrives.
     @Test
     void handleOptimisticLockingFailure_acceptsTheHibernateBackedSubclass() {
         ObjectOptimisticLockingFailureException ex =
@@ -151,12 +136,7 @@ class GlobalExceptionHandlerTest {
         assertEquals("CONCURRENT_MODIFICATION", response.getBody().code());
     }
 
-    /**
-     * An unreachable Keycloak must be a 502, not a 500.
-     * WHY: the failure is in an upstream dependency, not in this service. As a bare
-     * RuntimeException it reached the catch-all and told the caller "an unexpected error occurred",
-     * which is both wrong about whose fault it is and useless to act on.
-     */
+    // The fault is upstream - a 500 "unexpected error" blamed the wrong side.
     @Test
     void handleKeycloakIntegrationFailure_returns502() {
         KeycloakIntegrationException ex =
@@ -171,11 +151,7 @@ class GlobalExceptionHandlerTest {
         assertEquals("/api/doctors", response.getBody().path());
     }
 
-    /**
-     * The two Keycloak outcomes must stay on separate handlers: a taken username is a healthy
-     * Keycloak refusing for a reason the administrator can fix (409), while an unreachable one is
-     * an infrastructure failure (502). Folding them together was the original defect.
-     */
+    // Keep the two apart: taken username is fixable by the admin (409), unreachable is infrastructure (502).
     @Test
     void takenUsernameStaysA409AndDoesNotBecomeAGatewayError() {
         HttpServletRequest request = mock(HttpServletRequest.class);

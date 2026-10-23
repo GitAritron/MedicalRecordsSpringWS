@@ -36,8 +36,7 @@ class AuditLogServiceTest {
 
         auditLogService.log(null, "CREATE", "Doctor", 1L, "Dr. Georgi Ivanov");
 
-        // An unauthenticated action is recorded as "system" rather than dropped: the trail has to
-        // account for the change either way.
+        // Unauthenticated actions are logged as "system", not dropped.
         ArgumentCaptor<AuditLog> saved = ArgumentCaptor.forClass(AuditLog.class);
         verify(auditLogRepository, times(1)).save(saved.capture());
         assertEquals("system", saved.getValue().getActor());

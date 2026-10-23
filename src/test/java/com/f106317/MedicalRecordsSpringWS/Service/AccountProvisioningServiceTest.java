@@ -23,10 +23,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-/**
- * The rules that decide when a clinical record gets a Keycloak account, and what happens to the
- * role when it does not.
- */
+// When a record in the app gets a Keycloak account, and what happens to the role when it doesn't.
 @ExtendWith(MockitoExtension.class)
 class AccountProvisioningServiceTest {
 
@@ -41,7 +38,9 @@ class AccountProvisioningServiceTest {
         // Not stubbed here: several tests must prove no account was created at all.
     }
 
-    // ── provisionIfRequested ───────────────────────────────────────────────
+    // ──────────────────────────────────────────────
+    // provisionIfRequested
+    // ──────────────────────────────────────────────
 
     @Test
     @DisplayName("no username means no account: a records-only patient is a normal outcome")
@@ -79,7 +78,7 @@ class AccountProvisioningServiceTest {
         assertEquals("Tmp12345678", account.temporaryPassword());
     }
 
-    /** The username is trimmed before it reaches Keycloak, so a stray space cannot create a twin. */
+    // A stray space must not create a second account.
     @Test
     void provision_trimsUsername() {
         when(keycloakAdminService.generateTemporaryPassword()).thenReturn("Tmp12345678");
@@ -91,10 +90,7 @@ class AccountProvisioningServiceTest {
         verify(keycloakAdminService).createUser("ipetrov", "Ivan", "Petrov", "Tmp12345678");
     }
 
-    /**
-     * WHY this is refused: a second account silently strands the first, leaving the previous one
-     * holding a realm role with no record behind it.
-     */
+    // A second account would strand the first - a realm role with no record behind it.
     @Test
     @DisplayName("a username on an already-linked record is refused, and creates nothing")
     void provision_onLinkedRecord_isRefused() {
@@ -106,7 +102,7 @@ class AccountProvisioningServiceTest {
         verify(keycloakAdminService, never()).createUser(any(), any(), any(), any());
     }
 
-    /** Asking to link an existing account and create a new one in one request is ambiguous. */
+    // Linking an existing account and creating a new one at once is ambiguous.
     @Test
     void provision_whileAlsoLinking_isRefused() {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
@@ -117,11 +113,7 @@ class AccountProvisioningServiceTest {
         verify(keycloakAdminService, never()).createUser(any(), any(), any(), any());
     }
 
-    /**
-     * Clearing the link and supplying a username in the same request is deliberately refused
-     * rather than treated as "replace the account" — see the note on provisionIfRequested. The
-     * supported route is two saves: clear the link, then provision.
-     */
+    // Not treated as "replace the account" - clear the link, then provision, in two saves.
     @Test
     void provision_whileClearingAnExistingLink_isRefused() {
         assertThrows(IllegalArgumentException.class,
@@ -131,12 +123,11 @@ class AccountProvisioningServiceTest {
         verify(keycloakAdminService, never()).createUser(any(), any(), any(), any());
     }
 
-    // ── role changes are best-effort ───────────────────────────────────────
+    // ──────────────────────────────────────────────
+    // Role changes are best-effort
+    // ──────────────────────────────────────────────
 
-    /**
-     * WHY swallowed: the clinical record is already written by the time these run. Failing here
-     * would report an error for a write that did succeed, and could not undo it either.
-     */
+    // The record is already saved by now - failing would report an error for a write that succeeded.
     @Test
     void grantRole_swallowsKeycloakFailure() {
         doThrow(new RuntimeException("Keycloak unreachable"))
@@ -157,7 +148,6 @@ class AccountProvisioningServiceTest {
         verify(keycloakAdminService).removeRealmRole("kc-1", "DOCTOR");
     }
 
-    /** A record with no account behind it has no role to change, so Keycloak is never called. */
     @Test
     void roleChangesOnUnlinkedRecordsAreSkipped() {
         accountProvisioningService.grantRoleQuietly(null, "PATIENT");
@@ -168,12 +158,11 @@ class AccountProvisioningServiceTest {
         verifyNoInteractions(keycloakAdminService);
     }
 
-    // ── password re-issue ──────────────────────────────────────────────────
+    // ──────────────────────────────────────────────
+    // Password re-issue
+    // ──────────────────────────────────────────────
 
-    /**
-     * Unlike the role calls this propagates: the administrator asked for a password to hand over,
-     * so reporting success without one would have them pass on a value that does not work.
-     */
+    // Unlike role calls this propagates - otherwise the admin hands over a password that doesn't work.
     @Test
     void reissuePassword_propagatesKeycloakFailure() {
         when(keycloakAdminService.generateTemporaryPassword()).thenReturn("Tmp12345678");
@@ -184,11 +173,7 @@ class AccountProvisioningServiceTest {
                 () -> accountProvisioningService.reissuePassword("kc-1"));
     }
 
-    /**
-     * The administrator is handed the name the person signs in with, not their name on the record
-     * and not the account UUID — neither of which works at the sign-in screen. The username exists
-     * only in Keycloak, so it is read back from there.
-     */
+    // The admin needs the sign-in username, not the record name or the UUID. Only Keycloak has it.
     @Test
     void reissuePassword_returnsTheKeycloakUsernameAndNewPassword() {
         when(keycloakAdminService.getUsername("kc-1")).thenReturn("ipetrov");
@@ -201,10 +186,7 @@ class AccountProvisioningServiceTest {
         verify(keycloakAdminService).resetPassword("kc-1", "Tmp12345678");
     }
 
-    /**
-     * The username is read before the password is reset, so an account that cannot be read leaves
-     * the existing password working rather than resetting one we then cannot report.
-     */
+    // Username is read first, so an unreadable account keeps its current password.
     @Test
     void reissuePassword_whenUsernameCannotBeRead_doesNotResetThePassword() {
         doThrow(new RuntimeException("Keycloak unreachable"))

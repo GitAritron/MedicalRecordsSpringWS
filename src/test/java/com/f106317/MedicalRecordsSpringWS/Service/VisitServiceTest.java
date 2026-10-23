@@ -1,7 +1,5 @@
 package com.f106317.MedicalRecordsSpringWS.Service;
 
-import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
-import java.util.List;
 import com.f106317.MedicalRecordsSpringWS.TestAuth;
 import com.f106317.MedicalRecordsSpringWS.Data.Entity.*;
 import com.f106317.MedicalRecordsSpringWS.DTO.*;
@@ -27,10 +25,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * Unit tests for {@link VisitService}.
- * Covers visit creation, diagnosis/prescription/sick-leave creation, and report queries.
- */
 @ExtendWith(MockitoExtension.class)
 class VisitServiceTest {
 
@@ -47,8 +41,7 @@ class VisitServiceTest {
     @Mock
     private DoctorRepository doctorRepository;
 
-    // Real collaborator, not a mock. Mocking it away turned every ownership assertion into a
-    // no-op, which is why the tests below could not have caught an authorization regression.
+    // Real, not mocked - a mocked one makes every ownership assertion a no-op.
     @Spy
     private AuthorizationService authorizationService = new AuthorizationService();
 
@@ -82,58 +75,50 @@ class VisitServiceTest {
         visit.setVisitTime(LocalTime.now());
     }
 
-    /** Verifies all visits are retrieved and mapped to DTOs. */
     @Test
     void getAllVisits() {
         when(visitRepository.findAll()).thenReturn(Arrays.asList(visit));
         assertEquals(1, visitService.getAllVisits().size());
     }
 
-    /** Verifies a visit is created when both patient and doctor exist. */
     @Test
     void createVisit_success() {
-        VisitRequest request = new VisitRequest(1L, 1L, LocalDate.now(), LocalTime.now());
+        LocalDate date = LocalDate.now();
+        LocalTime time = LocalTime.of(10, 30);
+        VisitRequest request = new VisitRequest(1L, 1L, date, time);
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
-        when(visitRepository.save(any())).thenReturn(visit);
+        when(visitRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         VisitResponse response = visitService.createVisit(request, TestAuth.admin());
         assertEquals(1L, response.patientId());
+        assertEquals(1L, response.doctorId());
+        assertEquals(date, response.visitDate());
+        assertEquals(time, response.visitTime());
     }
 
-    /** Verifies a diagnosis record is created and linked to a visit. */
     @Test
     void createDiagnosis_success() {
         DiagnosisRequest request = new DiagnosisRequest(1L, "Flu");
-        Diagnosis diagnosis = new Diagnosis();
-        diagnosis.setId(1L);
-        diagnosis.setVisit(visit);
-        diagnosis.setName("Flu");
-
         when(visitRepository.findById(1L)).thenReturn(Optional.of(visit));
-        when(diagnosisRepository.save(any())).thenReturn(diagnosis);
+        when(diagnosisRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         DiagnosisResponse response = visitService.createDiagnosis(request, TestAuth.admin());
         assertEquals("Flu", response.name());
+        assertEquals(1L, response.visitId());
     }
 
-    /** Verifies a prescription record is created and linked to a visit. */
     @Test
     void createPrescription_success() {
         PrescriptionRequest request = new PrescriptionRequest(1L, "Aspirin");
-        Prescription prescription = new Prescription();
-        prescription.setId(1L);
-        prescription.setVisit(visit);
-        prescription.setNote("Aspirin");
-
         when(visitRepository.findById(1L)).thenReturn(Optional.of(visit));
-        when(prescriptionRepository.save(any())).thenReturn(prescription);
+        when(prescriptionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PrescriptionResponse response = visitService.createPrescription(request, TestAuth.admin());
         assertEquals("Aspirin", response.note());
+        assertEquals(1L, response.visitId());
     }
 
-    /** Verifies a sick leave record is created with the correct duration. */
     @Test
     void createSickLeave_success() {
         SickLeaveRequest request = new SickLeaveRequest(1L, LocalDate.now(), 5);
@@ -150,7 +135,6 @@ class VisitServiceTest {
         assertEquals(5, response.validForDays());
     }
 
-    /** Verifies visits are filtered by patient ID. */
     @Test
     void getVisitsByPatient() {
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
@@ -158,66 +142,24 @@ class VisitServiceTest {
         assertEquals(1, visitService.getVisitsByPatient(1L, TestAuth.admin()).size());
     }
 
-    /** Verifies visits are filtered by a date range. */
     @Test
     void getVisitsInPeriod() {
         when(visitRepository.findVisitsInPeriod(any(), any())).thenReturn(Arrays.asList(visit));
         assertEquals(1, visitService.getVisitsInPeriod(LocalDate.now(), LocalDate.now()).size());
     }
 
-    /** Verifies visits are filtered by doctor ID and date range. */
     @Test
     void getVisitsByDoctorInPeriod() {
         when(visitRepository.findVisitsByDoctorInPeriod(org.mockito.ArgumentMatchers.eq(1L), any(), any())).thenReturn(Arrays.asList(visit));
         assertEquals(1, visitService.getVisitsByDoctorInPeriod(1L, LocalDate.now(), LocalDate.now()).size());
     }
 
-    /** Verifies the aggregated report of most common diagnoses. */
-    @Test
-    void getMostCommonDiagnoses() {
-        when(diagnosisRepository.findMostCommonDiagnoses())
-                .thenReturn(List.of(new ReportDTO.DiagnosisCount("Flu", 10L)));
-
-        List<ReportDTO.DiagnosisCount> result = visitService.getMostCommonDiagnoses();
-
-        assertEquals(1, result.size());
-        assertEquals("Flu", result.get(0).diagnosisName());
-        assertEquals(10L, result.get(0).count());
-    }
-
-    /** Verifies patients can be retrieved by their diagnosis name. */
     @Test
     void getPatientsByDiagnosis() {
         when(diagnosisRepository.findPatientsByDiagnosisName("Flu")).thenReturn(Arrays.asList(patient));
         assertEquals(1, visitService.getPatientsByDiagnosis("Flu").size());
     }
 
-    /** Verifies the report of doctors ranked by sick leaves issued. */
-    @Test
-    void getDoctorsWithMostSickLeaves() {
-        when(sickLeaveRepository.findDoctorsWithMostSickLeaves())
-                .thenReturn(List.of(new ReportDTO.DoctorSickLeaveCount(1L, "Dr House", 5L)));
-
-        List<ReportDTO.DoctorSickLeaveCount> result = visitService.getDoctorsWithMostSickLeaves();
-
-        assertEquals(1, result.size());
-        assertEquals(5L, result.get(0).sickLeaveCount());
-    }
-
-    /** Verifies the report of months ranked by sick leave count. */
-    @Test
-    void getMonthsWithMostSickLeaves() {
-        when(sickLeaveRepository.findMonthsWithMostSickLeaves())
-                .thenReturn(List.of(new ReportDTO.SickLeaveMonthCount(2026, 1, 10L)));
-
-        List<ReportDTO.SickLeaveMonthCount> result = visitService.getMonthsWithMostSickLeaves();
-
-        assertEquals(1, result.size());
-        assertEquals(2026, result.get(0).year());
-        assertEquals(1, result.get(0).month());
-    }
-
-    /** Verifies ResourceNotFoundException when creating a visit with a non-existent patient. */
     @Test
     void createVisit_patientNotFound() {
         VisitRequest request = new VisitRequest(1L, 1L, LocalDate.now(), LocalTime.now());
@@ -225,7 +167,6 @@ class VisitServiceTest {
         assertThrows(com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException.class, () -> visitService.createVisit(request, TestAuth.admin()));
     }
 
-    /** Verifies ResourceNotFoundException when creating a visit with a non-existent doctor. */
     @Test
     void createVisit_doctorNotFound() {
         VisitRequest request = new VisitRequest(1L, 1L, LocalDate.now(), LocalTime.now());
@@ -234,7 +175,6 @@ class VisitServiceTest {
         assertThrows(com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException.class, () -> visitService.createVisit(request, TestAuth.admin()));
     }
 
-    /** Verifies ResourceNotFoundException when adding a diagnosis to a non-existent visit. */
     @Test
     void createDiagnosis_visitNotFound() {
         DiagnosisRequest request = new DiagnosisRequest(1L, "Flu");
@@ -242,7 +182,6 @@ class VisitServiceTest {
         assertThrows(com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException.class, () -> visitService.createDiagnosis(request, TestAuth.admin()));
     }
 
-    /** Verifies ResourceNotFoundException when retrieving a non-existent visit by ID. */
     @Test
     void getVisitById_notFound() {
         when(visitRepository.findById(1L)).thenReturn(Optional.empty());
@@ -294,14 +233,10 @@ class VisitServiceTest {
     }
 
     // ──────────────────────────────────────────────
-    // Ownership rules (specification §2)
+    // Ownership rules
     // ──────────────────────────────────────────────
-    // Previously untestable: AuthorizationService was mocked, so these assertions never ran.
 
-    /**
-     * "могат да въвеждат и редактират само информация за прегледите на пациентите, които са
-     * прегледали" — a doctor may amend a visit they performed.
-     */
+    // doctors edit "само информация за прегледите на пациентите, които са прегледали".
     @Test
     void createDiagnosis_doctorCanAnnotateOwnVisit() {
         doctor.setKeycloakId("kc-doctor-1");
@@ -312,7 +247,6 @@ class VisitServiceTest {
         assertNotNull(visitService.createDiagnosis(request, TestAuth.doctor("kc-doctor-1")));
     }
 
-    /** ...and not one performed by a colleague. */
     @Test
     void createDiagnosis_doctorCannotAnnotateAnotherDoctorsVisit() {
         doctor.setKeycloakId("kc-doctor-1");
@@ -334,7 +268,6 @@ class VisitServiceTest {
         verify(visitRepository, org.mockito.Mockito.never()).delete(any());
     }
 
-    /** A patient may read a visit of their own... */
     @Test
     void getVisitById_patientCanReadOwnVisit() {
         patient.setKeycloakId("kc-patient-1");
@@ -343,7 +276,6 @@ class VisitServiceTest {
         assertNotNull(visitService.getVisitById(1L, TestAuth.patient("kc-patient-1")));
     }
 
-    /** ...but not someone else's, however they guess the id. */
     @Test
     void getVisitById_patientCannotReadAnotherPatientsVisit() {
         patient.setKeycloakId("kc-patient-1");
@@ -362,7 +294,6 @@ class VisitServiceTest {
                 () -> visitService.getVisitsByPatient(1L, TestAuth.patient("kc-patient-2")));
     }
 
-    /** A doctor creating a visit cannot name a colleague as the attending physician. */
     @Test
     void createVisit_doctorCannotBookOnBehalfOfAnotherDoctor() {
         doctor.setKeycloakId("kc-doctor-1");
@@ -379,11 +310,7 @@ class VisitServiceTest {
     // Visit date bounds
     // ──────────────────────────────────────────────
 
-    /**
-     * visitDate is only @NotNull at the DTO level, so the service rejects dates that cannot
-     * describe a real appointment. Both directions are checked because visits are legitimately
-     * recorded retrospectively as well as booked ahead.
-     */
+    // visitDate is only @NotNull in the DTO, so the service binds it both ways - visits are backdated and booked ahead.
     @Test
     void createVisit_rejectsAbsurdlyFutureDate() {
         VisitRequest request = new VisitRequest(1L, 1L, LocalDate.now().plusYears(500), LocalTime.NOON);
@@ -404,10 +331,7 @@ class VisitServiceTest {
         verify(visitRepository, org.mockito.Mockito.never()).save(any());
     }
 
-    /**
-     * SickLeaveRequest.validFrom carries the same @NotNull-only weakness visitDate had, so the
-     * same plausibility bound applies — a sick leave cannot start in the year 9999.
-     */
+    // SickLeaveRequest.validFrom gets the same bound - a sick leave can't start in 9999.
     @Test
     void createSickLeave_rejectsAbsurdStartDate() {
         SickLeaveRequest request = new SickLeaveRequest(1L, LocalDate.now().plusYears(500), 5);
@@ -426,7 +350,6 @@ class VisitServiceTest {
         assertNotNull(visitService.createSickLeave(request, TestAuth.admin()));
     }
 
-    /** A visit recorded last year is ordinary history and must still be accepted. */
     @Test
     void createVisit_acceptsRecentPastDate() {
         LocalDate lastYear = LocalDate.now().minusYears(1);

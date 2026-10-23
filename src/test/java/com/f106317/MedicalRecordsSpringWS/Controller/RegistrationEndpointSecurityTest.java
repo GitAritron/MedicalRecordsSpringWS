@@ -26,15 +26,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Security tests for the registration endpoints, running against the <em>real</em>
- * {@link SecurityConfig} so that {@code @PreAuthorize} is actually evaluated.
- * <p>
- * WHY: the other controller tests install a permit-all filter chain, which means their
- * {@code @WithMockUser} roles have no effect. These tests exist to pin down the one rule that
- * matters here — only an administrator may create doctors and patients directly, while any
- * signed-in user may register themselves through the dedicated self-registration endpoints.
- */
+// Real SecurityConfig: only admins create doctors/patients directly, anyone signed in can self-register.
 @WebMvcTest({DoctorController.class, PatientController.class})
 @Import(SecurityConfig.class)
 class RegistrationEndpointSecurityTest {
@@ -47,29 +39,28 @@ class RegistrationEndpointSecurityTest {
     @MockitoBean private InsuranceService insuranceService;
     @MockitoBean private AccountProvisioningService accountProvisioning;
 
-    /** No account is provisioned in these tests; they are about who may reach the endpoint. */
+    // No account is provisioned - these tests are only about who can reach the endpoint.
     @org.junit.jupiter.api.BeforeEach
     void stubAccountProvisioning() {
         when(accountProvisioning.provisionIfRequested(any(), any(), any(), any(), any()))
                 .thenReturn(AccountProvisioningService.ProvisionedAccount.none());
     }
 
-    /** Required by the OAuth2 resource server configured in SecurityConfig. */
+    // Required by the OAuth2 resource server in SecurityConfig.
     @MockitoBean private JwtDecoder jwtDecoder;
 
     private static final String DOCTOR_BODY = """
             {"firstName":"Ivan","lastName":"Petrov","isGP":true,"specializationIds":[]}""";
     private static final String DOCTOR_SELF_BODY = """
-            {"firstName":"Ivan","lastName":"Petrov","specializationIds":[]}""";
+            {"firstName":"Ivan","lastName":"Petrov"}""";
     private static final String PATIENT_BODY = """
             {"egn":"1234567890","firstName":"John","lastName":"Doe"}""";
 
-    // ── POST /api/doctors — administrators only ────────────────────────────
+    // ──────────────────────────────────────────────
+    // POST /api/doctors: admin only
+    // ──────────────────────────────────────────────
 
-    /**
-     * Regression test for the tautological rule {@code hasRole('ADMIN') or isAuthenticated()},
-     * which collapsed to {@code isAuthenticated()} and let any signed-in user create doctors.
-     */
+    // Regression: hasRole('ADMIN') or isAuthenticated() collapsed to isAuthenticated().
     @Test
     @WithMockUser(roles = "PATIENT")
     void patientCannotCreateDoctor() throws Exception {
@@ -101,7 +92,9 @@ class RegistrationEndpointSecurityTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // ── POST /api/patients — administrators only ───────────────────────────
+    // ──────────────────────────────────────────────
+    // POST /api/patients: admin only
+    // ──────────────────────────────────────────────
 
     @Test
     @WithMockUser(roles = "PATIENT")
@@ -120,7 +113,9 @@ class RegistrationEndpointSecurityTest {
                 .andExpect(status().isCreated());
     }
 
-    // ── Self-registration — open to any signed-in user ─────────────────────
+    // ──────────────────────────────────────────────
+    // Self-registration: any signed-in user
+    // ──────────────────────────────────────────────
 
     @Test
     @WithMockUser
@@ -143,10 +138,7 @@ class RegistrationEndpointSecurityTest {
                 .andExpect(status().isCreated());
     }
 
-    /**
-     * Repeating the request is the documented way out of a PATIENT grant that failed while Keycloak
-     * was unreachable, so it must answer, not refuse. 200 rather than 201 says nothing was created.
-     */
+    // Repeating is the way out of a failed PATIENT grant, so it must answer. 200, not 201 - nothing was created.
     @Test
     @WithMockUser
     void repeatingPatientSelfRegistrationReturnsTheExistingRecord() throws Exception {

@@ -22,27 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Covers the eight fromEntity mappers and the two withTemporaryPassword copies.
- *
- * WHY: this layer looks like plain field-shuffling and was almost untested — one reference to
- * fromEntity across the whole suite. It has already produced a real defect: J10 was a
- * PatientResponse constructor that silently dropped keycloakId, which the service and controller
- * tests could not see because they assert on the DTO the mapper handed them rather than on the
- * entity it came from.
- *
- * Two properties are load-bearing here and asserted throughout:
- *   - every field the client needs actually survives the hop (the J10 class of bug), and
- *   - temporaryPassword is null unless it was explicitly attached, so credentials never ride along
- *     in an ordinary list response.
- */
+// fromEntity mappers and withTemporaryPassword. Service tests only see the finished DTO, so a dropped field gets past them.
+// Asserted throughout: needed fields survive the mapping, and temporaryPassword stays null unless attached.
 class ResponseMappingTest {
 
     @Nested
     @DisplayName("PatientResponse")
     class PatientMapping {
 
-        /** The direct J10 regression guard. */
         @Test
         void keycloakIdSurvivesTheMapping() {
             Patient patient = patient(5L, "kc-ivan", "1234567890", "Ivan", "Ivanov", doctorNamed(9L, "Gregory", "House"));
@@ -50,7 +37,7 @@ class ResponseMappingTest {
             PatientResponse response = PatientResponse.fromEntity(patient);
 
             assertEquals("kc-ivan", response.keycloakId(),
-                    "J10: the account binding must not be dropped on the way out");
+                    "the account binding must not be dropped on the way out");
         }
 
         @Test
@@ -75,10 +62,7 @@ class ResponseMappingTest {
             assertEquals("Dr. Gregory House", response.gpDoctorName());
         }
 
-        /**
-         * gp is a nullable column: a patient part-way through registration has not chosen one yet.
-         * The mapper must produce nulls rather than throw, or the registration screen 500s.
-         */
+        // gp is null mid-registration - the mapper must give nulls, not throw.
         @Test
         void aPatientWithNoGpMapsToNullsRatherThanThrowing() {
             Patient patient = patient(5L, "kc-ivan", "1234567890", "Ivan", "Ivanov", null);
@@ -148,7 +132,6 @@ class ResponseMappingTest {
                     .anyMatch(s -> s.id().equals(1L) && s.name().equals("Cardiology")));
         }
 
-        /** A doctor may legitimately have none, and the mapper must yield [] rather than null. */
         @Test
         void noSpecializationsBecomesAnEmptyListNotNull() {
             Doctor doctor = doctorNamed(9L, "Robert", "Chase");
@@ -242,7 +225,6 @@ class ResponseMappingTest {
             assertEquals(5, sickLeave.validForDays());
         }
 
-        /** An empty visit is a real state — the doctor has not recorded findings yet. */
         @Test
         void emptyCollectionsMapToEmptyListsNotNull() {
             Visit visit = fullVisit();
@@ -357,7 +339,7 @@ class ResponseMappingTest {
             assertEquals(when, response.createdAt());
         }
 
-        /** entityLabel is the only nullable column on the entity. */
+        // entityLabel is the only nullable column.
         @Test
         void aMissingEntityLabelStaysNull() {
             AuditLog log = new AuditLog();
@@ -372,7 +354,9 @@ class ResponseMappingTest {
         }
     }
 
-    // ---------------------------------------------------------------- fixture helpers
+    // ──────────────────────────────────────────────
+    // Fixture helpers
+    // ──────────────────────────────────────────────
 
     private static Doctor doctorNamed(Long id, String firstName, String lastName) {
         Doctor d = new Doctor();

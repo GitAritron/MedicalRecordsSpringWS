@@ -24,10 +24,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * Web layer tests for {@link VisitController}.
- * Verifies visit creation, sick-leave assignments, and patient visit lookups.
- */
+// Permit-all security - @WithMockUser roles aren't enforced here, see EndpointAuthorizationMatrixTest.
 @WebMvcTest(VisitController.class)
 class VisitControllerTest {
 
@@ -49,7 +46,6 @@ class VisitControllerTest {
 
     private final VisitResponse sampleVisit = new VisitResponse(1L, 1L, "John Doe", 1L, "Dr. House", LocalDate.now(), LocalTime.now(), List.of(), List.of(), null);
 
-    /** Verifies GET /api/visits returns a list of visits for ADMIN users. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getAllVisits() throws Exception {
@@ -59,7 +55,6 @@ class VisitControllerTest {
                 .andExpect(jsonPath("$[0].patientName").value("John Doe"));
     }
 
-    /** Verifies GET /api/visits/{id} returns a single visit for PATIENT users. */
     @Test
     @WithMockUser(roles = "PATIENT")
     void getVisitById() throws Exception {
@@ -69,7 +64,6 @@ class VisitControllerTest {
                 .andExpect(jsonPath("$.patientName").value("John Doe"));
     }
 
-    /** Verifies POST /api/visits creates a visit and returns 201 Created. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void createVisit() throws Exception {
@@ -81,7 +75,6 @@ class VisitControllerTest {
                 .andExpect(status().isCreated());
     }
 
-    /** Verifies POST /api/visits/diagnosis attaches a diagnosis to a visit. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void createDiagnosis() throws Exception {
@@ -93,7 +86,6 @@ class VisitControllerTest {
                 .andExpect(status().isCreated());
     }
 
-    /** Verifies POST /api/visits/prescription attaches a prescription to a visit. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void createPrescription() throws Exception {
@@ -105,7 +97,6 @@ class VisitControllerTest {
                 .andExpect(status().isCreated());
     }
 
-    /** Verifies POST /api/visits/sickleave attaches a sick leave to a visit. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void createSickLeave() throws Exception {
@@ -118,7 +109,6 @@ class VisitControllerTest {
     }
 
 
-    /** Verifies GET /api/visits/prescription/{id} returns a prescription. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void getPrescriptionById() throws Exception {
@@ -129,7 +119,6 @@ class VisitControllerTest {
                 .andExpect(jsonPath("$.note").value("Aspirin 100mg"));
     }
 
-    /** Verifies PUT /api/visits/prescription/{id} updates a prescription. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void updatePrescription() throws Exception {
@@ -143,7 +132,6 @@ class VisitControllerTest {
                 .andExpect(jsonPath("$.note").value("Updated Note"));
     }
 
-    /** Verifies DELETE /api/visits/prescription/{id} deletes a prescription. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void deletePrescription() throws Exception {
@@ -151,7 +139,6 @@ class VisitControllerTest {
                 .andExpect(status().isNoContent());
     }
 
-    /** Verifies DELETE /api/visits/{id} deletes a visit. */
     @Test
     @WithMockUser(roles = "DOCTOR")
     void deleteVisit() throws Exception {

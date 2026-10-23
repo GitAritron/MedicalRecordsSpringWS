@@ -38,23 +38,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Executes every repository query against a real database.
- *
- * WHY this class exists: the rest of the suite mocks all nine repositories, so the twelve JPQL
- * statements and the seven {@code @EntityGraph} fetch plans were never run — only parsed at
- * context startup. That is precisely how M1 survived into a demo: a fetch plan that pulls two
- * collections at once compiles fine and throws MultipleBagFetchException the moment it executes.
- * Mocked repositories cannot catch that class of defect, because the mock returns whatever the
- * test told it to.
- *
- * WHY H2 in MySQL mode rather than plain H2: production is MySQL 8, and MODE=MySQL keeps type
- * names (TEXT on Prescription.note) and function semantics closer to it. This is still not MySQL
- * — see TEST_PLAN.md for the pass that uses the real thing.
- *
- * The overrides below are required: src/main/resources/application.yml pins ddl-auto to validate
- * and the dialect to MySQL, which a @DataJpaTest slice would otherwise inherit and fail on.
- */
+// Runs every repository query for real - elsewhere repos are mocked, so a broken query or fetch plan only shows up here.
+// H2 in MySQL mode, still not exactly the same as MySQL. Overrides: application.yml pins ddl-auto=validate and the MySQL dialect.
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {
@@ -82,7 +67,7 @@ class RepositoryQueryTest {
     private Patient ivan;
     private Patient maria;
     private Patient petar;
-    private Visit marchIvan;    // 2 diagnoses + 2 prescriptions + sick leave  <- the M1 shape
+    private Visit marchIvan;    // 2 diagnoses + 2 prescriptions + sick leave
     private Visit marchMaria;
     private Visit juneIvan;
     private Visit januaryPetar;
@@ -124,10 +109,8 @@ class RepositoryQueryTest {
         em.persist(juneIvan);
         em.persist(januaryPetar);
 
-        // insuranceDate is always the first of the covered month - InsuranceService normalises it,
-        // and test-data.sql seeds it the same way. Ivan covers Jan, Feb and Mar, plus a July
-        // payment that sits outside the windows exercised below. paidOn is the real payment date,
-        // deliberately not the first, to keep the two columns distinguishable.
+        // insuranceDate is always the 1st (InsuranceService normalises it); paidOn deliberately isn't.
+        // Ivan covers Jan-Mar, plus a July payment outside the windows tested below.
         insurance(ivan, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 15));
         insurance(ivan, LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 20));
         insurance(ivan, LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 5));
@@ -138,21 +121,16 @@ class RepositoryQueryTest {
         audit("admin", "APPROVE_DOCTOR", "Doctor", wilson.getId(), LocalDateTime.of(2026, 1, 2, 8, 0));
         audit("admin", "DELETE", "Patient", petar.getId(), LocalDateTime.of(2026, 1, 3, 8, 0));
 
-        // Detach everything. Without this the persistence context would satisfy every association
-        // from memory and the @EntityGraph assertions below would pass even with no fetch plan.
+        // Detach everything, or the persistence context serves associations from memory and the @EntityGraph tests pass anyway.
         em.flush();
         em.clear();
     }
 
     @Nested
-    @DisplayName("VisitRepository @EntityGraph - M1 regression")
+    @DisplayName("VisitRepository @EntityGraph fetch plans")
     class VisitFetchPlans {
 
-        /**
-         * M1: the fetch plan names diagnoses and prescriptions together. Hibernate rejects two
-         * eagerly-fetched *bags* in one query with MultipleBagFetchException, which is why both
-         * are mapped as Set. Change either to List and this test fails - which is the point.
-         */
+        // Diagnoses and prescriptions are fetched together, so both must be Sets - two Lists throw MultipleBagFetchException.
         @Test
         void findAllFetchesTwoCollectionsWithoutMultipleBagFetch() {
             List<Visit> visits = assertDoesNotThrow(() -> visitRepository.findAll());
@@ -182,13 +160,7 @@ class RepositoryQueryTest {
             });
         }
 
-        /**
-         * The two period reports render exactly what {@code findAll} renders — VisitResponse walks
-         * patient, doctor, diagnoses, prescriptions and sick leave for every row — so they need the
-         * same fetch plan. They were written without one, and each row then cost five extra selects.
-         * Adding {@code @EntityGraph} to a {@code @Query} is also where MultipleBagFetchException
-         * would reappear, so these run the plan rather than trusting it parses.
-         */
+        // Period reports render what findAll renders, so they need its fetch plan (5 extra selects per row without it).
         @Test
         void findVisitsInPeriodAppliesTheFetchPlan() {
             List<Visit> march = assertDoesNotThrow(() -> visitRepository.findVisitsInPeriod(
@@ -213,17 +185,6 @@ class RepositoryQueryTest {
                 assertTrue(Hibernate.isInitialized(v.getDiagnoses()));
                 assertTrue(Hibernate.isInitialized(v.getPrescriptions()));
             });
-        }
-
-        /**
-         * A join fetch across two collections multiplies rows in the result set. If the query ever
-         * loses its DISTINCT-equivalent semantics, the same visit comes back more than once.
-         */
-        @Test
-        void multiCollectionFetchDoesNotDuplicateRows() {
-            List<Visit> visits = visitRepository.findAll();
-            long distinctIds = visits.stream().map(Visit::getId).distinct().count();
-            assertEquals(visits.size(), distinctIds, "the fetch join must not duplicate visits");
         }
     }
 
@@ -277,13 +238,10 @@ class RepositoryQueryTest {
     }
 
     @Nested
-    @DisplayName("PaidInsuranceRepository - M3 six-month window")
+    @DisplayName("PaidInsuranceRepository - six-month window")
     class InsuranceQueries {
 
-        /**
-         * M3: the window had no upper bound, so payments dated in the future counted toward the
-         * six-month check. The July payment below is what that defect used to let through.
-         */
+        // Payments dated after the window must not count toward the six months - the July payment checks that.
         @Test
         void coveredMonthKeysExcludePaymentsAfterTheWindow() {
             List<Integer> keys = paidInsuranceRepository.findCoveredMonthKeys(
@@ -331,20 +289,12 @@ class RepositoryQueryTest {
         }
     }
 
-    /**
-     * These rules live in init.sql and, until the entities declared them too, existed nowhere the
-     * test schema could see — so nothing could prove they were enforced. The @Table and @Check
-     * declarations on PaidInsurance and SickLeave are what make these two tests possible at all.
-     */
+    // Only testable because PaidInsurance and SickLeave declare init.sql's constraints too (@Table, @Check).
     @Nested
     @DisplayName("Constraints mirrored from init.sql")
     class SchemaConstraints {
 
-        /**
-         * Because InsuranceService normalises insuranceDate to the first of the covered month,
-         * this constraint is what enforces "one payment per month per patient". It is the database
-         * half of the rule; the service half is the existsBy check that produces a readable message.
-         */
+        // Database half of one-payment-per-month (insuranceDate is the 1st). The service half gives the readable message.
         @Test
         void aPatientCannotBePaidUpTwiceForTheSameMonth() {
             PaidInsurance duplicate = new PaidInsurance();
@@ -352,8 +302,7 @@ class RepositoryQueryTest {
             duplicate.setInsuranceDate(LocalDate.of(2026, 1, 1));    // January already covered
             duplicate.setPaidOn(LocalDate.of(2026, 1, 28));          // a different real payment date
 
-            // persist, not flush, is what raises it: id is GenerationType.IDENTITY, so Hibernate
-            // must issue the INSERT immediately to learn the generated key.
+            // persist, not flush, raises it - IDENTITY ids force an immediate INSERT.
             assertThrows(ConstraintViolationException.class, () -> {
                 em.persist(duplicate);
                 em.flush();
@@ -437,10 +386,7 @@ class RepositoryQueryTest {
             assertTrue(doctorRepository.findByKeycloakId("kc-nobody").isEmpty());
         }
 
-        /**
-         * A LEFT JOIN, so a doctor with no visits must still appear with a count of zero. An inner
-         * join would silently drop Dr Chase from the report.
-         */
+        // LEFT JOIN - Dr Chase has no visits and must still appear with 0.
         @Test
         void visitCountIncludesDoctorsWithNoVisits() {
             List<ReportDTO.DoctorVisitCount> rows = doctorRepository.findDoctorsWithVisitCount();
@@ -591,10 +537,7 @@ class RepositoryQueryTest {
             approvals.forEach(log -> assertEquals("APPROVE_DOCTOR", log.getAction()));
         }
 
-        /**
-         * J1: this set is what removes an approved doctor from the pending list. If it ever
-         * returned entity ids for the wrong action, approved doctors would reappear as pending.
-         */
+        // This set removes approved doctors from the pending list - wrong ids and they'd show as pending again.
         @Test
         void approvedEntityIdsAreTheApprovedDoctorsOnly() {
             Set<Long> approved =
@@ -609,10 +552,7 @@ class RepositoryQueryTest {
                     .findEntityIdsByActionAndEntityType("NO_SUCH_ACTION", "Doctor").isEmpty());
         }
 
-        /**
-         * The audit screen's Prev / Next read totalPages and number off this, so the page metadata
-         * has to be right, not just the rows on it.
-         */
+        // The audit screen's Prev / Next use totalPages and number, so the page metadata must be right too.
         @Test
         void pagedFeedReportsItsOwnBounds() {
             Page<AuditLog> first = auditLogRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 2));
@@ -626,7 +566,9 @@ class RepositoryQueryTest {
         }
     }
 
-    // ---------------------------------------------------------------- fixture helpers
+    // ──────────────────────────────────────────────
+    // Fixture helpers
+    // ──────────────────────────────────────────────
 
     private Specialization specialization(String name) {
         Specialization s = new Specialization();

@@ -328,7 +328,7 @@ must not be able to leave a real account created or a live user de-roled.
 ./gradlew test
 ```
 
-385 tests, no Docker required - the suite runs against H2 with a mocked identity provider. A JaCoCo
+377 tests, no Docker required - the suite runs against H2 with a mocked identity provider. A JaCoCo
 report is written to `build/reports/jacoco/test/html/index.html`.
 
 | Suite | Covers |

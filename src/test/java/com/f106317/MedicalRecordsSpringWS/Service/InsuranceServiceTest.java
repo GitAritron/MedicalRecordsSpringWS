@@ -46,7 +46,7 @@ class InsuranceServiceTest {
     @InjectMocks
     private InsuranceService insuranceService;
 
-    /** Month keys as the repository returns them: year * 100 + month, counting back from now. */
+    // Month keys as the repository returns them (year * 100 + month), counting back from now.
     private static List<Integer> monthsBack(int howMany) {
         List<Integer> keys = new java.util.ArrayList<>();
         YearMonth m = YearMonth.now();
@@ -57,22 +57,10 @@ class InsuranceServiceTest {
         return keys;
     }
 
-    /** All 6 months of the window run unbroken back from this one, so the patient is insured. */
     @Test
     void insuredVerdict_true() {
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(monthsBack(6));
         assertTrue(insuranceService.getStatus(1L).insured());
-    }
-
-    /**
-     * Five months must fail.
-     * WHY: this is the regression guard for the original off-by-one — the old window spanned seven
-     * calendar months while requiring only six, so a patient could skip a month and still pass.
-     */
-    @Test
-    void insuredVerdict_falseWhenOneMonthMissing() {
-        when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(monthsBack(5));
-        assertFalse(insuranceService.getStatus(1L).insured());
     }
 
     @Test
@@ -81,19 +69,7 @@ class InsuranceServiceTest {
         assertFalse(insuranceService.getStatus(1L).insured());
     }
 
-    /**
-     * Six paid months that do NOT run back from the current one must fail, and this is the case a
-     * plain count cannot see: the patient stopped paying, so they are not insured now, even though
-     * six months inside the window carry a payment.
-     * <p>
-     * The window only holds six months, so a gap can only be produced by a payment older than it —
-     * which the query excludes. The run therefore breaks at the missing current month.
-     */
-    /**
-     * Someone who stopped paying two months ago has neither the current month nor the previous one,
-     * so there is no anchor and the run is zero — however many older months they paid. This is the
-     * case a plain tally cannot see.
-     */
+    // Stopped two months ago: no anchor month, so the run is zero however much they paid before.
     @Test
     void insuredVerdict_zeroWhenTheyStoppedBeforeLastMonth() {
         YearMonth twoBack = YearMonth.now().minusMonths(2);
@@ -111,12 +87,9 @@ class InsuranceServiceTest {
         assertEquals(2, status.unpaidMonths().size());
     }
 
-    /**
-     * Pins down the window itself: it must span exactly 6 calendar months, start on the 1st, and
-     * end today — so that neither a 7th month nor a future-dated payment can be counted.
-     */
+    // The window starts on the 1st and ends today, so no future-dated payment can count.
     @Test
-    void insuredVerdict_windowSpansExactlySixMonthsEndingToday() {
+    void insuredVerdict_windowSpansSevenMonthsFromTheFirstToToday() {
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(monthsBack(6));
 
         insuranceService.getStatus(1L).insured();
@@ -129,19 +102,14 @@ class InsuranceServiceTest {
         assertEquals(today, end.getValue(), "window must end today, not in the future");
         assertEquals(1, start.getValue().getDayOfMonth(), "window must start on the 1st of a month");
 
-        // Seven months, not six: a run anchored at last month can reach six months back from there.
-        // This is safe only because nothing is counted inside the window — the run must be unbroken
-        // from its anchor, so the old "skip a month and still pass" bug cannot come back. The test
-        // immediately below is the guard for that.
+        // Seven, not six: a run anchored at last month reaches six back from there.
+        // Safe because the run must be unbroken - the next test guards that.
         long monthsSpanned = ChronoUnit.MONTHS.between(
                 YearMonth.from(start.getValue()), YearMonth.from(end.getValue())) + 1;
         assertEquals(7, monthsSpanned, "window must reach the oldest month a run could touch");
     }
 
-    /**
-     * The regression guard for the original off-by-one. Seven months of data are fetched, but a
-     * patient who skipped a month must still fail however many payments they made.
-     */
+    // Skipping a month must fail however many payments there are.
     @Test
     void insuredVerdict_falseWhenAMonthIsSkippedInsideTheRun() {
         List<Integer> withAGap = new java.util.ArrayList<>(monthsBack(7));
@@ -154,10 +122,7 @@ class InsuranceServiceTest {
         assertEquals(1, status.unpaidMonths().size(), "exactly the skipped month is owed");
     }
 
-    /**
-     * The current month is not yet over, so not having paid it is not a lapse. A patient covered
-     * unbroken through last month is insured, exactly as an unpaid current bill is not yet overdue.
-     */
+    // The current month isn't over yet, so not paying it isn't a lapse.
     @Test
     void insuredVerdict_trueWhenTheRunEndsLastMonthAndThisOneIsNotYetPaid() {
         List<Integer> throughLastMonth = new java.util.ArrayList<>();
@@ -171,8 +136,7 @@ class InsuranceServiceTest {
         InsuranceStatusResponse status = insuranceService.getStatus(1L);
 
         assertTrue(status.insured());
-        // Insured, and this month is still listed as owed — which is precisely the position:
-        // covered, with the current bill outstanding.
+        // Insured, with the current month still listed as owed.
         assertEquals(1, status.unpaidMonths().size());
         assertEquals(YearMonth.now().getMonthValue(), status.unpaidMonths().get(0).month());
     }
@@ -193,12 +157,7 @@ class InsuranceServiceTest {
         verify(insuranceRepository).save(any());
     }
 
-    /**
-     * Insurance is bought by the month, so the covered month is the record's identity.
-     * The form is a date picker, so an administrator recording August's contribution may pick any
-     * day in August; storing that day verbatim let the same month be paid for more than once,
-     * because uq_patient_insurance_date compares whole dates.
-     */
+    // The covered month is the record's identity.
     @Test
     void recordPayment_normalisesTheCoveredMonthToTheFirst() {
         Patient patient = new Patient();
@@ -237,9 +196,6 @@ class InsuranceServiceTest {
         verify(insuranceRepository, never()).save(any());
     }
 
-    // ──────────────────────────────────────────────
-    // The справка §1 asks for: reported, not reduced to a flag
-    // ──────────────────────────────────────────────
 
     @Test
     void getStatus_reportsNothingOwedWhenFullyCovered() {
@@ -251,10 +207,7 @@ class InsuranceServiceTest {
         assertTrue(status.unpaidMonths().isEmpty(), "nothing owed when every month is paid");
     }
 
-    /**
-     * One month short is the boundary the rule turns on, and the case where saying *how* short
-     * matters — it is the difference between a reminder and a refusal.
-     */
+    // One month short is the boundary
     @Test
     void getStatus_oneMonthShortIsNotInsuredAndNamesTheMonth() {
         when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(monthsBack(5));
@@ -265,11 +218,7 @@ class InsuranceServiceTest {
         assertEquals(1, status.unpaidMonths().size(), "only the oldest month in the window is owed");
     }
 
-    /**
-     * A patient who has never paid has no row in the grouped query at all. A report of who is
-     * covered has to name the people who are not, so they are folded back in at zero rather than
-     * silently dropped.
-     */
+    // Never-paid patients have no row in the grouped query, so they're folded back in at zero.
     @Test
     void getStatusForAllPatients_includesPatientsWithNoPaymentsAtZero() {
         Patient paid = new Patient();
@@ -278,8 +227,7 @@ class InsuranceServiceTest {
         never.setId(2L); never.setFirstName("Petar"); never.setLastName("Ivanov"); never.setEgn("7504221485");
 
         when(patientRepository.findAll()).thenReturn(java.util.List.of(paid, never));
-        // Explicit type argument: List.of(new Object[]{...}) would spread the array into varargs
-        // and produce a two-element List<Object> rather than one row.
+        // Explicit type: List.of(new Object[]{...}) would spread the array into varargs.
         // One row per covered month, as the grouped query returns them.
         List<Object[]> rowsFromDb = new java.util.ArrayList<>();
         for (Integer key : monthsBack(6)) {
@@ -295,7 +243,7 @@ class InsuranceServiceTest {
 
         assertFalse(rows.get(1).insured());
         assertEquals("7504221485", rows.get(1).egn());
-        // Never paid, so every month in the window is owed — and named, not just counted.
+        // Never paid, so every month in the window is owed - and named, not just counted.
         assertEquals(6, rows.get(1).unpaidMonths().size());
         assertTrue(rows.get(0).unpaidMonths().isEmpty(), "fully covered patients owe nothing");
     }
@@ -321,12 +269,7 @@ class InsuranceServiceTest {
         return payment;
     }
 
-    /**
-     * Correcting a payment normalises the new month exactly as recording one does.
-     * WHY: insuranceDate *is* the month key — the covered-month queries read YEAR and MONTH off it
-     * and the unique constraint is on the column — so a correction that stored the 7th would leave
-     * the record inconsistent with every row the seed and recordPayment write.
-     */
+    // insuranceDate is the month key, so a correction normalises it just like recordPayment.
     @Test
     void updatePayment_normalisesTheCoveredMonthToTheFirst() {
         Patient patient = patientWithId(1L);
@@ -345,7 +288,6 @@ class InsuranceServiceTest {
         assertEquals(LocalDate.of(2026, 3, 20), response.paidOn(), "paidOn is when the money arrived");
     }
 
-    /** The one-payment-per-month rule still holds when a payment is moved onto a taken month. */
     @Test
     void updatePayment_refusesToMoveOntoAMonthAnotherPaymentCovers() {
         Patient patient = patientWithId(1L);
@@ -362,7 +304,6 @@ class InsuranceServiceTest {
         verify(insuranceRepository, never()).save(any());
     }
 
-    /** A payment does not conflict with itself — correcting only paidOn must be allowed. */
     @Test
     void updatePayment_keepingTheSameMonthIsNotAConflict() {
         Patient patient = patientWithId(1L);
@@ -380,11 +321,7 @@ class InsuranceServiceTest {
         assertEquals(LocalDate.of(2026, 5, 2), response.paidOn(), "a late payment still covers February");
     }
 
-    /**
-     * A payment reached through the wrong patient's URL is not found.
-     * WHY it matters: the id alone would let one patient's contribution be edited or removed under
-     * another patient's path, and the audit entry would then name the wrong person.
-     */
+    // Otherwise one patient's payment could be edited under another's URL, and the audit entry would name the wrong person.
     @Test
     void deletePayment_refusesAPaymentBelongingToAnotherPatient() {
         Patient thisPatient = patientWithId(1L);
@@ -397,7 +334,7 @@ class InsuranceServiceTest {
         verify(insuranceRepository, never()).delete(any());
     }
 
-    /** The audit entry names the month, because the row itself is gone by the time anyone reads it. */
+    // The row is gone afterwards, so the audit entry has to name the month.
     @Test
     void deletePayment_recordsWhichMonthWasWithdrawn() {
         Patient patient = patientWithId(1L);

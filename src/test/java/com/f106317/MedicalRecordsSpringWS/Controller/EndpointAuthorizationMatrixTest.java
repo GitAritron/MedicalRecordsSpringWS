@@ -29,20 +29,8 @@ import java.util.stream.Stream;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * The role matrix of specification §2, asserted endpoint by endpoint against the real
- * {@link SecurityConfig} so that {@code @PreAuthorize} is genuinely evaluated.
- * <p>
- * WHY this exists: the per-controller tests install a permit-all filter chain, so their
- * {@code @WithMockUser} roles have no effect and every access rule in the application went
- * unverified. This test only asserts <em>denials</em> — a rejected request never reaches the
- * handler, so no service stubbing is needed and each case stays honest.
- * <p>
- * Note on bodies: {@code @PreAuthorize} is enforced when the controller method is invoked, which
- * happens <em>after</em> Spring resolves and validates {@code @RequestBody}. Write endpoints
- * therefore need a schema-valid body, otherwise the request fails validation with 400 before
- * authorization is ever consulted.
- */
+// Role matrix against the real SecurityConfig. Only asserts denials, so no service stubbing is needed.
+// Write endpoints need a valid body - @PreAuthorize runs after @RequestBody validation, so a bad body is a 400 first.
 @WebMvcTest({PatientController.class, DoctorController.class, VisitController.class,
              ReportController.class, AuditLogController.class, RegistrationStatusController.class})
 @Import(SecurityConfig.class)
@@ -60,7 +48,7 @@ class EndpointAuthorizationMatrixTest {
 
     @MockitoBean private AuthorizationService authorizationService;
 
-    /** Required by the OAuth2 resource server declared in SecurityConfig. */
+    // Required by the OAuth2 resource server in SecurityConfig.
     @MockitoBean private JwtDecoder jwtDecoder;
 
     private static final List<String> ALL_ROLES = List.of("ADMIN", "DOCTOR", "PATIENT");
@@ -82,7 +70,6 @@ class EndpointAuthorizationMatrixTest {
     private static final String INSURANCE =
             "{\"insuranceDate\":\"2026-01-01\",\"paidOn\":\"2026-01-01\"}";
 
-    /** One protected endpoint and the roles the specification says may reach it. */
     private record Endpoint(HttpMethod method, String path, String body, Set<String> allowed) {
         @Override
         public String toString() {
@@ -100,7 +87,9 @@ class EndpointAuthorizationMatrixTest {
 
     static Stream<Endpoint> endpoints() {
         return Stream.of(
-                // ── Patients ──────────────────────────────────────────────
+                // ──────────────────────────────────────────────
+                // Patients
+                // ──────────────────────────────────────────────
                 get("/api/patients", "ADMIN", "DOCTOR"),
                 get("/api/patients/1", "ADMIN", "DOCTOR", "PATIENT"),
                 get("/api/patients/keycloak/abc", "ADMIN", "PATIENT"),
@@ -108,19 +97,17 @@ class EndpointAuthorizationMatrixTest {
                 write(HttpMethod.POST, "/api/patients", PATIENT, "ADMIN"),
                 write(HttpMethod.PUT, "/api/patients/1", PATIENT, "ADMIN"),
                 write(HttpMethod.DELETE, "/api/patients/1", null, "ADMIN"),
-                // Administrators only: the specification lets doctors enter and edit "само" (only)
-                // information about examinations they performed, and a contribution payment is not
-                // that. The GET above stays open to them — reading whether a visit is covered is
-                // the справка the specification does ask for.
+                // Admin only: doctors edit only their own examinations, and a payment isn't one. Reading coverage stays open.
                 write(HttpMethod.POST, "/api/patients/1/insurance", INSURANCE, "ADMIN"),
                 write(HttpMethod.PATCH, "/api/patients/1/gp?gpDoctorId=1", null, "ADMIN", "PATIENT"),
-                // The correction view for contributions. Administrators only: the verdict everyone
-                // else needs is the GET above, and these three can rewrite what it reports.
+                // Correction view - admin only, since these can rewrite what the GET above reports.
                 get("/api/patients/1/insurance/payments", "ADMIN"),
                 write(HttpMethod.PUT, "/api/patients/1/insurance/payments/1", INSURANCE, "ADMIN"),
                 write(HttpMethod.DELETE, "/api/patients/1/insurance/payments/1", null, "ADMIN"),
 
-                // ── Doctors ───────────────────────────────────────────────
+                // ──────────────────────────────────────────────
+                // Doctors
+                // ──────────────────────────────────────────────
                 get("/api/doctors", "ADMIN", "DOCTOR", "PATIENT"),
                 get("/api/doctors/1", "ADMIN", "DOCTOR", "PATIENT"),
                 get("/api/doctors/keycloak/abc", "ADMIN", "DOCTOR"),
@@ -134,7 +121,9 @@ class EndpointAuthorizationMatrixTest {
                 write(HttpMethod.PUT, "/api/doctors/specializations/1", SPECIALIZATION, "ADMIN"),
                 write(HttpMethod.DELETE, "/api/doctors/specializations/1", null, "ADMIN"),
 
-                // ── Visits and clinical documents ─────────────────────────
+                // ──────────────────────────────────────────────
+                // Visits and clinical documents
+                // ──────────────────────────────────────────────
                 get("/api/visits", "ADMIN", "DOCTOR"),
                 get("/api/visits/1", "ADMIN", "DOCTOR", "PATIENT"),
                 get("/api/visits/patient/1", "ADMIN", "DOCTOR", "PATIENT"),
@@ -154,7 +143,9 @@ class EndpointAuthorizationMatrixTest {
                 write(HttpMethod.PUT, "/api/visits/sickleave/1", SICK_LEAVE, "ADMIN", "DOCTOR"),
                 write(HttpMethod.DELETE, "/api/visits/sickleave/1", null, "ADMIN", "DOCTOR"),
 
-                // ── Reports: clinical staff only ──────────────────────────
+                // ──────────────────────────────────────────────
+                // Reports: clinical staff only
+                // ──────────────────────────────────────────────
                 get("/api/reports/diagnoses/common", "ADMIN", "DOCTOR"),
                 get("/api/reports/doctors/visits", "ADMIN", "DOCTOR"),
                 get("/api/reports/doctors/gp-patients", "ADMIN", "DOCTOR"),
@@ -166,11 +157,12 @@ class EndpointAuthorizationMatrixTest {
                 get("/api/reports/visits/doctor/period?doctorId=1&start=2026-01-01&end=2026-12-31", "ADMIN", "DOCTOR"),
                 get("/api/reports/pending-registrations", "ADMIN"),
 
-                // ── Audit log: administrators only ────────────────────────
+                // ──────────────────────────────────────────────
+                // Audit log: admin only
+                // ──────────────────────────────────────────────
                 get("/api/audit-logs", "ADMIN"),
 
-                // Reports only on the caller's own subject, so every signed-in role may read it;
-                // listed here so the anonymous case is still asserted.
+                // Only reports on the caller's own subject, so any role may read it. Listed for the anonymous case.
                 get("/api/registration-status", "ADMIN", "DOCTOR", "PATIENT")
         );
     }
@@ -190,7 +182,6 @@ class EndpointAuthorizationMatrixTest {
         return builder;
     }
 
-    /** Every role the endpoint does not name must be refused with 403. */
     @ParameterizedTest(name = "{0}")
     @MethodSource("endpoints")
     void deniesRolesOutsideTheMatrix(Endpoint endpoint) throws Exception {
@@ -203,7 +194,6 @@ class EndpointAuthorizationMatrixTest {
         }
     }
 
-    /** Nothing under /api is reachable without authentication. */
     @ParameterizedTest(name = "{0}")
     @MethodSource("endpoints")
     @WithAnonymousUser

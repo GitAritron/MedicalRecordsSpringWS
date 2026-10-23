@@ -24,10 +24,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * Web layer tests for {@link DoctorController}.
- * Uses MockMvc with a permissive security config to test endpoint routing and JSON serialization.
- */
+// Permit-all security - @WithMockUser roles aren't enforced here, see EndpointAuthorizationMatrixTest.
 @WebMvcTest(DoctorController.class)
 class DoctorControllerTest {
 
@@ -53,7 +50,7 @@ class DoctorControllerTest {
     @MockitoBean
     private com.f106317.MedicalRecordsSpringWS.Service.AccountProvisioningService accountProvisioning;
 
-    /** See PatientControllerTest: default the provisioning outcome to "no account was asked for". */
+    // Default: no account was asked for here (see PatientControllerTest).
     @org.junit.jupiter.api.BeforeEach
     void stubAccountProvisioning() {
         when(accountProvisioning.provisionIfRequested(any(), any(), any(), any(), any()))
@@ -65,7 +62,6 @@ class DoctorControllerTest {
 
     private final DoctorResponse sampleDoctor = new DoctorResponse(1L, "kc-id-123", "John", "Doe", true, List.of(), null, false);
 
-    /** Verifies GET /api/doctors returns a list of doctors for ADMIN users. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getAllDoctors() throws Exception {
@@ -75,7 +71,6 @@ class DoctorControllerTest {
                 .andExpect(jsonPath("$[0].firstName").value("John"));
     }
 
-    /** Verifies GET /api/doctors/{id} returns a single doctor for PATIENT users. */
     @Test
     @WithMockUser(roles = "PATIENT")
     void getDoctorById() throws Exception {
@@ -85,7 +80,6 @@ class DoctorControllerTest {
                 .andExpect(jsonPath("$.firstName").value("John"));
     }
 
-    /** Verifies POST /api/doctors creates a doctor and returns 201 Created. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void createDoctor() throws Exception {
@@ -97,7 +91,6 @@ class DoctorControllerTest {
                 .andExpect(status().isCreated());
     }
 
-    /** Verifies PUT /api/doctors/{id} updates a doctor and returns 200 OK. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void updateDoctor() throws Exception {
@@ -109,7 +102,6 @@ class DoctorControllerTest {
                 .andExpect(status().isOk());
     }
 
-    /** Verifies DELETE /api/doctors/{id} returns 204 No Content. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void deleteDoctor() throws Exception {

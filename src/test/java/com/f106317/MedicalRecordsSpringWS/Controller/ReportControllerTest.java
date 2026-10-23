@@ -21,10 +21,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Web layer tests for {@link ReportController}.
- * Verifies that report endpoints return aggregated data correctly.
- */
+// Permit-all security - @WithMockUser roles aren't enforced here, see EndpointAuthorizationMatrixTest.
 @WebMvcTest(ReportController.class)
 class ReportControllerTest {
 
@@ -50,11 +47,10 @@ class ReportControllerTest {
     @MockitoBean
     private com.f106317.MedicalRecordsSpringWS.Service.AuditLogService auditLogService;
 
-    /** Backs the health-insurance report — the "справка" §1 asks for, across the whole roster. */
+    // Backs the insurance report for all patients.
     @MockitoBean
     private com.f106317.MedicalRecordsSpringWS.Service.InsuranceService insuranceService;
 
-    /** Verifies GET /api/reports/diagnoses/common returns ranked diagnoses. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getMostCommonDiagnoses() throws Exception {
@@ -64,7 +60,6 @@ class ReportControllerTest {
                 .andExpect(jsonPath("$[0].diagnosisName").value("Flu"));
     }
 
-    /** Verifies GET /api/reports/sickleaves/doctors returns doctors ranked by sick leaves issued. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getDoctorsWithMostSickLeaves() throws Exception {
@@ -74,7 +69,6 @@ class ReportControllerTest {
                 .andExpect(jsonPath("$[0].doctorName").value("John Doe"));
     }
 
-    /** Verifies GET /api/reports/sickleaves/months returns months ranked by sick leave count. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getMonthsWithMostSickLeaves() throws Exception {
@@ -84,7 +78,6 @@ class ReportControllerTest {
                 .andExpect(jsonPath("$[0].month").value(1));
     }
 
-    /** Verifies GET /api/reports/doctors/visits returns doctors ranked by visit count. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getDoctorsWithVisitCount() throws Exception {
@@ -94,7 +87,6 @@ class ReportControllerTest {
                 .andExpect(jsonPath("$[0].doctorName").value("John Doe"));
     }
 
-    /** Verifies GET /api/reports/visits/period filters visits by date range. */
     @Test
     @WithMockUser(roles = "ADMIN")
     void getVisitsInPeriod() throws Exception {
@@ -109,13 +101,7 @@ class ReportControllerTest {
     // Completeness
     // ──────────────────────────────────────────────
 
-    /**
-     * Reports answer the specification's questions, so a truncated answer is a wrong one.
-     * The endpoints used to serve 50 rows by default and slice the rest away in memory — the full
-     * result was already materialised, so the slice saved nothing and only hid rows. This pins the
-     * replacement: every row the service returns reaches the caller, and a leftover {@code size}
-     * in a bookmarked URL cannot reintroduce the cut.
-     */
+    // Reports used to cut off at 50 rows. Every row must come back, even with a leftover ?size in the URL.
     @Test
     @WithMockUser(roles = "ADMIN")
     void reportsReturnEveryRow() throws Exception {
