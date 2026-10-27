@@ -92,7 +92,7 @@ class GlobalExceptionHandlerTest {
         assertEquals("MALFORMED_REQUEST", response.getBody().code());
     }
 
-    // Missing static files (favicon, a mistyped .js) used to fall through to the catch-all as a 500.
+    // Missing static files (favicon, a mistyped .js) should be 404 not 500.
     @Test
     void handleNoResourceFound_returns404() {
         HttpServletRequest request = new MockHttpServletRequest("GET", "/missing.js");
@@ -136,7 +136,6 @@ class GlobalExceptionHandlerTest {
         assertEquals("CONCURRENT_MODIFICATION", response.getBody().code());
     }
 
-    // The fault is upstream - a 500 "unexpected error" blamed the wrong side.
     @Test
     void handleKeycloakIntegrationFailure_returns502() {
         KeycloakIntegrationException ex =
@@ -163,5 +162,19 @@ class GlobalExceptionHandlerTest {
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals("USERNAME_TAKEN", response.getBody().code());
+    }
+
+    // Unlike DATA_CONFLICT, the message passes through - it names what is in the way.
+    @Test
+    void handleConflict_returns409WithTheMessage() {
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getRequestURI()).thenReturn("/api/doctors/1");
+
+        ResponseEntity<ApiError> response = exceptionHandler.handleConflict(
+                new ConflictException("Dr. John Doe has 3 recorded visit(s)"), request);
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals("CONFLICT", response.getBody().code());
+        assertEquals("Dr. John Doe has 3 recorded visit(s)", response.getBody().message());
     }
 }

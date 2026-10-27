@@ -19,6 +19,9 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -89,6 +92,22 @@ class PatientControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"keycloakId\":\"33333333-3333-3333-3333-333333333333\", \"egn\":\"1234567890\", \"firstName\":\"John\", \"lastName\":\"Doe\", \"gpDoctorId\":1}"))
                 .andExpect(status().isCreated());
+    }
+
+    // A duplicate EGN has to stop the request before a Keycloak account is created for it.
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void createPatient_duplicateEgn_createsNoAccount() throws Exception {
+        doThrow(new com.f106317.MedicalRecordsSpringWS.Exception.ConflictException("A patient with EGN 1234567890 already exists"))
+                .when(patientService).requireEgnAvailable("1234567890");
+
+        mockMvc.perform(post("/api/patients")
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"egn\":\"1234567890\", \"firstName\":\"John\", \"lastName\":\"Doe\", \"username\":\"jdoe\"}"))
+                .andExpect(status().isConflict());
+
+        verify(accountProvisioning, never()).provisionIfRequested(any(), any(), any(), any(), any());
     }
 
     @Test

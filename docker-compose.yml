@@ -10,9 +10,9 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       # Runs first (name order) so the keycloak schema exists before Keycloak connects.
-      - ./src/main/resources/db/00-keycloak-db.sql:/docker-entrypoint-initdb.d/00-keycloak-db.sql
-      - ./src/main/resources/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
-      - ./src/main/resources/db/test-data.sql:/docker-entrypoint-initdb.d/02-test-data.sql
+      - ./seed/00-keycloak-db.sql:/docker-entrypoint-initdb.d/00-keycloak-db.sql
+      - ./seed/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./seed/test-data.sql:/docker-entrypoint-initdb.d/02-test-data.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
       interval: 10s
@@ -35,7 +35,7 @@ services:
     ports:
       - "8081:8080"
     volumes:
-      - ./realm-export.json:/opt/keycloak/data/import/realm-export.json
+      - ./seed/realm-export.json:/opt/keycloak/data/import/realm-export.json
       # The sign-in pages are themed to match the application (see keycloak-theme/README.md).
       # /opt/keycloak/themes holds nothing but a README in the distribution — the built-in themes
       # live inside the themes jar — so mounting one theme directory in beside it is safe.

@@ -17,9 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initKeycloak() {
-    // Rendered into #app by WebController from app.keycloak.* in application.yml, rather than
-    // written here: pointing the front end at another Keycloak is then a configuration change, and
-    // it moves in step with the backend's issuer-uri, which is built from the same property.
+    // Filled in by WebController from app.keycloak.* - the same property the backend's issuer-uri is built from.
     const config = document.getElementById('app').dataset;
     keycloak = new Keycloak({
         url: config.keycloakUrl,
@@ -27,12 +25,8 @@ function initKeycloak() {
         clientId: config.keycloakClientId
     });
 
-    // pkceMethod S256: frontend-client is a public client, so it has no secret and Keycloak would
-    // otherwise exchange an authorization code for tokens for whoever presents it. The code travels
-    // in a redirect URL, where it can leak through history, a Referer header or an extension. PKCE
-    // binds the code to the browser that began the flow, so an intercepted one is useless. The
-    // realm sets pkce.code.challenge.method=S256 to refuse an exchange that arrives without a
-    // verifier — this side opts in, that side enforces it.
+    // PKCE: frontend-client is public (no secret), so this binds the auth code to this browser - a leaked code is useless.
+    // The realm enforces it (pkce.code.challenge.method=S256) and refuses an exchange without a verifier.
     keycloak.init({ onLoad: 'check-sso', checkLoginIframe: false, pkceMethod: 'S256' }).then(async authenticated => {
         const usernameEl = document.getElementById('username');
         const userInfo = document.getElementById('userInfo');
@@ -52,7 +46,7 @@ function initKeycloak() {
             if (!currentUserRole) {
                 renderNewUserRoleSelection();
             } else if (await isOrphanedAccount()) {
-                // Holds a role but the record behind it is gone — see renderNewUserRoleSelection.
+                // Holds a role but the record behind it is gone - see renderNewUserRoleSelection.
                 renderNewUserRoleSelection();
             } else {
                 renderTabs();
@@ -74,19 +68,15 @@ function login() { keycloak.login(); }
 function register() { keycloak.register(); }
 function logout() { keycloak.logout(); }
 
-// Escapes text for interpolation into HTML. The previous implementation round-tripped through
-// div.textContent -> div.innerHTML, which escapes & <> but leaves quotes untouched — so any value
-// placed inside a quoted attribute (value="${esc(x)}") could still break out of it.
+// Escapes quotes too, so a value inside an attribute (value="${esc(x)}") can't break out of it.
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 function esc(str) {
     if (str == null) return '';
     return String(str).replace(/[&<>"']/g, ch => ESC_MAP[ch]);
 }
 
-// Resolves a display name from an id we already hold, so inline onclick handlers only ever carry
-// numbers. esc() is NOT safe inside an onclick attribute: the HTML parser decodes entities before
-// the JavaScript is compiled, so an escaped quote turns back into a real one and can close the
-// string literal. Keeping names out of generated code sidesteps that entirely.
+// onclick handlers carry ids only - esc() is NOT safe there, the parser turns an escaped quote back
+// into a real one before the JS runs. Names are looked up from the id instead.
 function patientNameById(patientId) {
     const p = patientsList.find(x => x.id === patientId);
     return p ? `${p.firstName} ${p.lastName}` : `ID ${patientId}`;
@@ -98,11 +88,8 @@ function doctorNameById(doctorId) {
 }
 
 // ================= DATE FORMATTING =================
-// Every date shown to a user goes through these. The API speaks ISO (yyyy-mm-dd), which is right
-// for the wire and required by <input type="date">, but the interface previously rendered a mix
-// of raw ISO in tables and the browser's own locale format elsewhere — so the same screen could
-// show both 2026-07-01 and 7/1/2026. These render the Bulgarian convention, dd.mm.yyyy.
-// Note: never use these to populate an <input type="date">; that control requires ISO.
+// Every date shown goes through these, in the Bulgarian dd.mm.yyyy - the API speaks ISO (yyyy-mm-dd).
+// Never use them to fill an <input type="date">; that control requires ISO.
 
 /** "2026-07-01" (or an ISO datetime) -> "01.07.2026" */
 function fmtDate(value) {
@@ -130,6 +117,18 @@ function fmtMonth(year, month) {
     return `${String(month).padStart(2, '0')}.${year}`;
 }
 
+// yyyy-mm-dd in local time - toISOString() is UTC, which is still yesterday until 03:00 in Sofia.
+function localIsoDate(d = new Date()) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// The current month is listed as unpaid but is not overdue until it ends.
+function fmtUnpaidMonth(m) {
+    const now = new Date();
+    const isCurrent = m.year === now.getFullYear() && m.month === now.getMonth() + 1;
+    return fmtMonth(m.year, m.month) + (isCurrent ? ' (due by month end)' : '');
+}
+
 async function fetchWithAuth(url, options = {}) {
     try {
         await keycloak.updateToken(30);
@@ -150,11 +149,7 @@ function setActiveTab(clickedBtn) {
     clickedBtn.classList.add('active');
 }
 
-/**
- * Shows or hides the header search box.
- * WHY: it filters rows of .data-table, so on the registration and "awaiting approval" screens —
- * which have no table — it is a control that cannot do anything.
- */
+// Hidden on screens with no .data-table (registration, awaiting approval), where it can't filter anything.
 function setSearchVisible(visible) {
     const bar = document.querySelector('.filter-bar');
     if (!bar) return;
@@ -165,59 +160,58 @@ function setSearchVisible(visible) {
     }
 }
 
-/**
- * What each role sees, in one order for everybody: their own view first, then the shared
- * directories, then visits, then reports, and the administrator-only log last.
- *
- * WHY it is declared here rather than built per role: the three strips used to be assembled
- * independently and had drifted apart — Doctors sat before Patients for an administrator and after
- * them for a doctor, and Reports was the first tab for one role and the last for the other.
- * Declaring the order once makes that kind of drift impossible.
- *
- * `landing: true` marks the screen the dashboard opens on. It is read by both renderTabs and
- * loadDashboard, so the highlighted tab and the screen actually shown cannot disagree — which they
- * would if the highlight were simply pinned to the first tab.
- *
- * Specification §2: "Лекарите трябва да могат да виждат информацията за всички пациенти и лекари."
- * The API grants doctors the patient directory and the reports; these tabs are what make that
- * permission reachable from the interface.
- */
+// Every role's tabs in one order: own view, shared directories, visits, reports, admin log last.
+// landing = the opening screen. Doctors get the All tabs because spec §2 lets them see every patient and doctor.
 const TABS_BY_ROLE = {
     ADMIN: [
-        { label: 'Patients',   load: () => loadAllPatients() },
-        { label: 'Doctors',    load: () => loadDoctorsDirectory() },
-        { label: 'Visits',     load: () => loadDoctorVisits() },
-        { label: 'Reports',    load: () => loadFullReportsDashboard(), landing: true },
-        { label: 'Audit Logs', load: () => loadAuditLogs() }
+        { label: 'Patients',   load: loadAllPatients },
+        { label: 'Doctors',    load: loadDoctorsDirectory },
+        { label: 'Visits',     load: loadDoctorVisits },
+        { label: 'Reports',    load: loadFullReportsDashboard, landing: true },
+        { label: 'Audit Logs', load: loadAuditLogs }
     ],
     DOCTOR: [
-        { label: 'My Patients',  load: () => loadMyPatients(), landing: true },
-        { label: 'All Patients', load: () => loadAllPatients() },
-        { label: 'All Doctors',  load: () => loadDoctorsDirectory() },
-        { label: 'Visits',       load: () => loadDoctorVisits() },
-        { label: 'Reports',      load: () => loadFullReportsDashboard() }
+        { label: 'My Patients',  load: loadMyPatients, landing: true },
+        { label: 'All Patients', load: loadAllPatients },
+        { label: 'All Doctors',  load: loadDoctorsDirectory },
+        { label: 'Visits',       load: loadDoctorVisits },
+        { label: 'Reports',      load: loadFullReportsDashboard }
     ],
     PATIENT: [
-        { label: 'My Medical History', load: () => loadPatientHistory(), landing: true },
-        { label: 'Doctors Directory',  load: () => loadDoctorsDirectory() }
+        { label: 'My Medical History', load: loadPatientHistory, landing: true },
+        { label: 'Doctors Directory',  load: loadDoctorsDirectory }
     ]
 };
+
+// Each screen's loader -> its tab button, so a screen reached without a click still lights its tab.
+const tabButtons = new Map();
 
 function renderTabs() {
     setSearchVisible(true);
     const navTabs = document.getElementById('nav-tabs');
     navTabs.innerHTML = '';
+    tabButtons.clear();
 
     (TABS_BY_ROLE[currentUserRole] || []).forEach(tab => {
         const button = document.createElement('button');
         button.className = tab.landing ? 'tab-btn active' : 'tab-btn';
         button.textContent = tab.label;
-        button.addEventListener('click', () => {
-            setActiveTab(button);
-            tab.load();
-        });
+        button.addEventListener('click', () => tab.load());
+        tabButtons.set(tab.load, button);
         navTabs.appendChild(button);
     });
+}
+
+// Called at the top of every tab's loader.
+function markActiveTab(loader) {
+    const button = tabButtons.get(loader);
+    if (button) setActiveTab(button);
+}
+
+// Re-runs the screen of the highlighted tab, for actions that are offered on more than one screen.
+async function reloadActiveTab() {
+    const active = [...tabButtons].find(([, button]) => button.classList.contains('active'));
+    if (active) await active[0]();
 }
 
 /** Opens whichever screen the role's tab strip marks as its landing, so the two stay in step. */
@@ -230,22 +224,8 @@ async function loadDashboard() {
 
 // ================= NEW USER ROLE SELECTION =================
 
-/**
- * Whether the signed-in user holds a PATIENT or DOCTOR role with no matching record behind it.
- *
- * WHY this state exists: deleting a patient or doctor removes the clinical record and revokes the
- * realm role, but the Keycloak account itself survives — deciding whether to delete or disable an
- * account is identity-provider policy, and doing it from here would mean a non-atomic write across
- * two systems. The role revocation is also best-effort: revokeRoleQuietly logs a Keycloak failure
- * and lets the deletion stand, so a role can outlive its record. Add a role granted outside the
- * application and the same state appears. Such a user can still sign in, and without this check
- * they were routed to a dashboard for a record that no longer exists and shown "Could not find
- * your patient profile", with no way to recover: the registration screen only appears for users
- * with no role, and they still have one.
- *
- * Treating them as unregistered lets them create a new profile, which is the recoverable outcome.
- * Administrators are exempt — an ADMIN role is not backed by a patient or doctor record.
- */
+// Holds PATIENT/DOCTOR but the record is gone (the account survives a delete, and revoking the role is best-effort).
+// Treated as unregistered so they can make a new profile instead of a dead end. Admins are exempt.
 async function isOrphanedAccount() {
     if (currentUserRole !== 'PATIENT' && currentUserRole !== 'DOCTOR') return false;
     try {
@@ -259,11 +239,8 @@ async function isOrphanedAccount() {
     }
 }
 
-/**
- * A user with no realm role has either not registered yet, or has applied as a doctor and is
- * waiting for approval. Distinguishing the two stops an applicant being shown the role picker
- * again on every sign-in, only to hit the duplicate-profile guard if they re-apply.
- */
+// No role = not registered yet OR a doctor applicant waiting for approval. Telling them apart stops
+// an applicant getting the role picker on every sign-in.
 async function renderNewUserRoleSelection() {
     setSearchVisible(false);
     const contentArea = document.getElementById('content-area');
@@ -286,14 +263,14 @@ async function renderNewUserRoleSelection() {
                     <div style="max-width: 550px; margin: 2rem auto; text-align: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #38BDF8; padding: 2rem; border-radius: 12px;">
                         <h3 style="color: #38BDF8;">Profile already created</h3>
                         <p style="color: #94A3B8; margin-top: 0.75rem;">Your patient profile exists but your account has not picked up the PATIENT role yet.</p>
-                        <p style="color: #64748B; font-size: 0.85rem; margin-top: 0.75rem;">Reloading cannot grant the role — re-submitting your registration can.</p>
+                        <p style="color: #64748B; font-size: 0.85rem; margin-top: 0.75rem;">Reloading cannot grant the role - re-submitting your registration can.</p>
                         <button class="btn btn-primary" style="margin-top: 1.25rem;" onclick="retryPatientActivation()">Retry activation</button>
                     </div>`;
                 return;
             }
         }
     } catch (err) {
-        // Fall through to the role picker — a status check failure should not block registration.
+        // Fall through to the role picker - a status check failure should not block registration.
         console.error('Could not read registration status', err);
     }
 
@@ -303,7 +280,7 @@ async function renderNewUserRoleSelection() {
 function renderRolePicker() {
     document.getElementById('content-area').innerHTML = `
         <div style="max-width: 550px; margin: 2rem auto; text-align: center;">
-            <h3>Welcome, ${esc(keycloak.tokenParsed.preferred_username)}!</h3>
+            <h3>Welcome, ${esc(keycloak.tokenParsed.given_name || keycloak.tokenParsed.preferred_username)}!</h3>
 
             <div id="rolePicker">
                 <p class="muted-label" style="margin-bottom: 2rem;">Please select your role to complete your profile setup.</p>
@@ -324,32 +301,20 @@ function renderRolePicker() {
     `;
 }
 
-/**
- * Finishes a registration whose PATIENT grant did not go through.
- *
- * WHY it re-opens the form rather than pressing a button on the user's behalf: the record is found
- * by the token subject, but the request still has to satisfy the registration payload's validation,
- * and nothing on this screen knows the EGN — the status endpoint returns two booleans. Since
- * self-registration is now idempotent, re-submitting writes no second record; it grants the role
- * and returns the record that already exists.
- */
+// Finishes a registration whose PATIENT grant failed. Re-opens the form because the EGN isn't known here;
+// self-registration is idempotent, so resubmitting only grants the role.
 async function retryPatientActivation() {
     renderRolePicker();
     await showPatientRegistrationForm();
     const container = document.getElementById('selfRegContainer');
     container.insertAdjacentHTML('afterbegin', `
         <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid #38BDF8; color: #94A3B8; padding: 0.9rem 1rem; border-radius: 8px; margin-bottom: 1rem;">
-            Your profile already exists — re-enter your details to finish activating your account.
+            Your profile already exists - re-enter your details to finish activating your account.
             No second record will be created.
         </div>`);
 }
 
-/**
- * WHY no GP dropdown here: at this point the user holds no realm role, so the doctor directory
- * returns 403 and the list would render empty — offering a choice the user cannot make. The GP is
- * chosen straight afterwards from their own dashboard, which shows the unassigned state and a
- * Choose GP button, and by then they hold the PATIENT role.
- */
+// No GP dropdown: with no role yet the doctor list is a 403. The GP is chosen from their dashboard right after.
 async function showPatientRegistrationForm() {
     const container = document.getElementById('selfRegContainer');
     document.getElementById('rolePicker').hidden = true;
@@ -446,7 +411,7 @@ async function submitSelfPatientRegistration(e) {
                 <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10B981; color: #10B981; padding: 1.5rem; border-radius: 12px; text-align: center;">
                     <h4>Registration saved</h4>
                     <p>Your patient profile has been created. Your account has not picked up the PATIENT role
-                       yet — reload to try again. If this screen comes back, press <em>Retry activation</em>
+                       yet - reload to try again. If this screen comes back, press <em>Retry activation</em>
                        there; patients need no approval, so the only thing outstanding is the role itself.</p>
                     <button class="btn btn-primary" style="margin-top: 1rem;" onclick="location.reload()">Reload Now</button>
                 </div>
@@ -519,8 +484,10 @@ function closeModal(modalId) {
         currentEditVisitId = null;
         currentVisitClinicalData = null;
         editingSickLeaveId = null;
+        editingClinicalItem = null;
         renderSickLeaveFormMode();
-        loadDoctorVisits();
+        (visitModalReturn || loadDoctorVisits)();
+        visitModalReturn = null;
     }
 }
 
@@ -566,13 +533,7 @@ async function submitSpecForm(e) {
     }
 }
 
-/**
- * The specializations, with the controls to rename and remove them.
- *
- * WHY it exists: specializations were create-only, so a misspelt one was permanent and appeared on
- * every doctor holding it — and the specification gives administrators the right to edit all the
- * information in the system.
- */
+// Rename and delete for specializations - otherwise a misspelt one stays on every doctor holding it.
 async function manageSpecializations() {
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = '<p>Loading specializations...</p>';
@@ -585,45 +546,71 @@ async function manageSpecializations() {
         html += `<button class="btn btn-primary btn-add-new" onclick="openAddSpecModal()">+ Add Specialization</button> `;
         html += `<button class="btn btn-secondary btn-add-new" onclick="loadDoctorsDirectory()">← Back to Doctors</button>`;
 
-        if (specializationsList.length === 0) {
-            html += '<p class="muted-label">No specializations recorded.</p>';
-        } else {
-            html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">ID</th>'
-                 + '<th onclick="sortTable(1, this)">Name</th><th>Actions</th></tr></thead><tbody>';
-            specializationsList.forEach(s => {
-                html += `<tr><td>${s.id}</td><td>${esc(s.name)}</td>`
-                     + `<td><button class="action-btn btn-edit" onclick="renameSpecialization(${s.id})">Rename</button> `
-                     + `<button class="action-btn btn-delete" onclick="deleteSpecialization(${s.id})">Delete</button></td></tr>`;
-            });
-            html += '</tbody></table>';
-        }
-        contentArea.innerHTML = html;
+        renamingSpecializationId = null;
+        contentArea.innerHTML = html + '<div id="specializationsTable"></div>';
+        renderSpecializationsTable();
     } catch (err) {
         contentArea.innerHTML = `<p class="error-text">Error loading specializations: ${esc(err.message)}</p>`;
     }
 }
 
-async function renameSpecialization(id) {
-    const current = specializationsList.find(s => s.id === id);
+// The specialization whose name is open for editing, if any.
+let renamingSpecializationId = null;
+
+function renderSpecializationsTable() {
+    const container = document.getElementById('specializationsTable');
+    if (specializationsList.length === 0) {
+        container.innerHTML = '<p class="muted-label">No specializations recorded.</p>';
+        return;
+    }
+    let html = '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">ID</th>'
+             + '<th onclick="sortTable(1, this)">Name</th><th>Actions</th></tr></thead><tbody>';
+    specializationsList.forEach(s => {
+        html += s.id === renamingSpecializationId
+            ? `<tr><td>${s.id}</td><td><input type="text" id="specRenameInput" class="inline-input" value="${esc(s.name)}" onkeydown="onSpecRenameKey(event)"></td>`
+              + `<td><button class="action-btn btn-save" onclick="saveSpecializationRename()">Save</button> `
+              + `<button class="action-btn btn-cancel" onclick="cancelSpecializationRename()">Cancel</button></td></tr>`
+            : `<tr><td>${s.id}</td><td>${esc(s.name)}</td>`
+              + `<td><button class="action-btn btn-edit" onclick="renameSpecialization(${s.id})">Rename</button> `
+              + `<button class="action-btn btn-delete" onclick="deleteSpecialization(${s.id})">Delete</button></td></tr>`;
+    });
+    container.innerHTML = html + '</tbody></table>';
+}
+
+function renameSpecialization(id) {
+    renamingSpecializationId = id;
+    renderSpecializationsTable();
+    const input = document.getElementById('specRenameInput');
+    input.focus();
+    input.select();
+}
+
+function cancelSpecializationRename() {
+    renamingSpecializationId = null;
+    renderSpecializationsTable();
+}
+
+function onSpecRenameKey(event) {
+    if (event.key === 'Enter') saveSpecializationRename();
+    else if (event.key === 'Escape') cancelSpecializationRename();
+}
+
+async function saveSpecializationRename() {
+    const current = specializationsList.find(s => s.id === renamingSpecializationId);
     if (!current) return;
-    const name = prompt('Specialization name:', current.name);
-    if (name === null) return;
-    if (!name.trim()) { alert('Please enter a name.'); return; }
-    if (name.trim() === current.name) return;
+    const name = document.getElementById('specRenameInput').value.trim();
+    if (!name) { alert('Please enter a name.'); return; }
+    if (name === current.name) { cancelSpecializationRename(); return; }
     try {
-        const res = await fetchWithAuth(`${API_BASE}/doctors/specializations/${id}`, {
-            method: 'PUT', body: JSON.stringify({ name: name.trim() })
+        const res = await fetchWithAuth(`${API_BASE}/doctors/specializations/${current.id}`, {
+            method: 'PUT', body: JSON.stringify({ name })
         });
         if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to rename specialization'));
         await manageSpecializations();
     } catch (err) { alert(err.message); }
 }
 
-/**
- * Deletes a specialization, warning that it comes off every doctor holding it.
- * The doctors themselves are untouched — only the join rows go, and a doctor with no specialization
- * is a valid record.
- */
+// Takes it off every doctor holding it. The doctors stay - one with no specialization is valid.
 async function deleteSpecialization(id) {
     const current = specializationsList.find(s => s.id === id);
     const name = current ? current.name : `#${id}`;
@@ -635,11 +622,7 @@ async function deleteSpecialization(id) {
     } catch (err) { alert(err.message); }
 }
 
-/**
- * Insurance standing for every patient, keyed by id, in one request.
- * WHY not one call per row: the list views need it for the whole table, and asking per patient
- * would be a request each. Returns an empty map if the check fails, so a list still renders.
- */
+// Insurance for every patient, keyed by id, in one request. Empty map on failure so the list still renders.
 async function fetchInsuranceStatuses() {
     try {
         const res = await fetchWithAuth(`${API_BASE}/reports/patients/insurance`);
@@ -652,15 +635,9 @@ async function fetchInsuranceStatuses() {
     }
 }
 
-/**
- * Insurance as a compact cell: the verdict, and how much is outstanding.
- * WHY the number of months owed rather than the unbroken run: the run counts only consecutive
- * months, so a patient who paid four of the six with a gap in the middle shows as "1/6" — which
- * reads as far worse than their position is. The count of unpaid months is the same fact stated in
- * a way that cannot mislead, and it is the one anybody acts on.
- */
+// Shows months owed, not the unbroken run - a gap in the middle makes the run ("1/6") look far worse than it is.
 function insuranceCell(status) {
-    if (!status) return '<span class="muted">—</span>';
+    if (!status) return '<span class="muted">-</span>';
     const owed = (status.unpaidMonths || []).length;
     const suffix = owed === 0
         ? ''
@@ -678,6 +655,7 @@ async function openAddPatientModal() {
     document.getElementById('patientId').value = '';
     document.getElementById('patientKeycloakId').value = '';
     document.getElementById('patientUsername').value = '';
+    document.getElementById('patientEgn').readOnly = false;
     // Nothing to re-issue for a record that does not exist yet.
     document.getElementById('patientAccountActions').style.display = 'none';
     syncAccountFields('patient');
@@ -697,6 +675,8 @@ async function editPatient(id) {
     document.getElementById('patientFirstName').value = patient.firstName;
     document.getElementById('patientLastName').value = patient.lastName;
     document.getElementById('patientEgn').value = patient.egn;
+    // The EGN identifies the person, so it is fixed once the record exists.
+    document.getElementById('patientEgn').readOnly = true;
     // Blank on open: a username here means "create a new account", never "the current one".
     document.getElementById('patientUsername').value = '';
     document.getElementById('patientAccountActions').style.display = patient.keycloakId ? 'block' : 'none';
@@ -707,12 +687,7 @@ async function editPatient(id) {
     openModal('patientModal');
 }
 
-/**
- * Fills the GP dropdown.
- * WHY only general practitioners: the server rejects a non-GP with "Doctor with id X is not a
- * General Practitioner", so offering the rest was offering choices that could only ever fail.
- * This now matches openChangeGpModal, which already filtered.
- */
+// GPs only - the server rejects anyone else. Same filter as openChangeGpModal.
 function populateGpDropdown(selectedGpId = null) {
     const gpSelect = document.getElementById('patientGpId');
     gpSelect.innerHTML = '<option value="">-- No GP Assigned --</option>';
@@ -729,9 +704,7 @@ async function submitPatientForm(e) {
     const gpVal = document.getElementById('patientGpId').value;
 
     const patientData = {
-        // Sent as-is rather than `|| null`: the server reads an absent field as "leave the link
-        // alone" and an empty string as "unlink", so collapsing empty to null would make clearing
-        // the box do nothing at all.
+        // Sent as-is, not `|| null`: absent = leave the link alone, "" = unlink. Null would make clearing the box do nothing.
         keycloakId: document.getElementById('patientKeycloakId').value.trim(),
         firstName: document.getElementById('patientFirstName').value.trim(),
         lastName: document.getElementById('patientLastName').value.trim(),
@@ -756,7 +729,18 @@ async function submitPatientForm(e) {
 }
 
 async function deletePatient(id) {
-    if (!confirm('Are you sure you want to delete this patient?')) return;
+    // Their visits are deleted with them, so say how many before asking.
+    let warning = 'This also deletes their whole medical history.';
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/visits/patient/${id}`);
+        if (res.ok) {
+            const count = (await res.json()).length;
+            warning = count === 0
+                ? 'They have no recorded visits.'
+                : `This also deletes their ${count} recorded visit${count === 1 ? '' : 's'}, with every diagnosis, prescription and sick leave.`;
+        }
+    } catch (e) { /* keep the generic warning */ }
+    if (!confirm(`Delete ${patientNameById(id)}? ${warning}`)) return;
     try {
         const response = await fetchWithAuth(`${API_BASE}/patients/${id}`, { method: 'DELETE' });
         if (!response.ok) throw new Error(await apiErrorMessage(response, 'Failed to delete patient'));
@@ -764,11 +748,7 @@ async function deletePatient(id) {
     } catch (err) { alert(err.message); }
 }
 
-/**
- * Which patient list the user came from, so "← Back to Patients" returns to the screen whose tab is
- * highlighted. It used to always return to All Patients, which left a doctor arriving from My
- * Patients looking at a different list than the tab said.
- */
+// Which patient list we came from, so "← Back to Patients" returns to the one whose tab is highlighted.
 let patientListOrigin = 'all';
 
 function backToPatientList() {
@@ -776,6 +756,7 @@ function backToPatientList() {
 }
 
 async function loadAllPatients() {
+    markActiveTab(loadAllPatients);
     const contentArea = document.getElementById('content-area');
     managingInsuranceForPatientId = null;   // this screen replaces the insurance one
     patientListOrigin = 'all';
@@ -900,18 +881,8 @@ async function submitDoctorForm(e) {
 
 // ================= ACCOUNT PROVISIONING =================
 
-/**
- * Shows the one-time password when the server issued one.
- * WHY it is driven off the response rather than the form: the server decides whether an account was
- * actually created, and it declines in cases the form cannot see — an already-linked record, for
- * instance. Rendering only when `temporaryPassword` comes back keeps the two in step.
- */
-/**
- * Keeps the portal-access controls consistent with what the server will actually accept.
- * WHY: a record that is already linked cannot be given a second account — the server refuses it.
- * Disabling the username box states that rule where the administrator can see it, instead of
- * letting them fill the form in and meet a 400.
- */
+// Shows the one-time password only if the response has one - the server decides whether an account was created.
+// A linked record can't get a second account, so the username box is disabled instead of ending in a 400.
 function syncAccountFields(prefix) {
     const usernameInput = document.getElementById(prefix + 'Username');
     const linked = document.getElementById(prefix + 'KeycloakId').value.trim().length > 0;
@@ -926,7 +897,7 @@ function showCredentialsIfIssued(username, saved) {
     showCredentials(`Username: ${username}`, saved.temporaryPassword);
 }
 
-/** @param accountLine identifies the account — always "Username: x", the value they sign in with. */
+// accountLine is always "Username: x" - the value they sign in with.
 function showCredentials(accountLine, password) {
     document.getElementById('credentialsText').value =
         `${accountLine}\nTemporary password: ${password}`;
@@ -942,11 +913,7 @@ function copyCredentials() {
     });
 }
 
-/**
- * Issues a fresh one-time password for the account behind a record.
- * @param resource 'patients' or 'doctors'
- * @param idFieldId the hidden input holding the record id in the open modal
- */
+// New one-time password. resource: 'patients' or 'doctors'; idFieldId: the hidden id input in the open modal.
 async function reissuePassword(resource, idFieldId) {
     const id = document.getElementById(idFieldId).value;
     if (!id) return;
@@ -956,22 +923,28 @@ async function reissuePassword(resource, idFieldId) {
         const res = await fetchWithAuth(`${API_BASE}/${resource}/${id}/reissue-password`, { method: 'POST' });
         if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to re-issue password'));
         const saved = await res.json();
-        // The username comes back from Keycloak, which is the only place it exists — the record
-        // stores just the account UUID, and it is the username the person signs in with.
+        // The username only exists in Keycloak - the record stores just the account UUID.
         showCredentials(`Username: ${saved.username}`, saved.temporaryPassword);
     } catch (err) { alert(err.message); }
 }
 
+// Also turns down an application from the Reports banner. Their sign-in account stays, so they can apply again.
 async function deleteDoctor(id) {
-    if (!confirm('Are you sure you want to delete this doctor?')) return;
+    await fetchDoctorsList();
+    const doctor = doctorsList.find(d => d.id === id);
+    const question = doctor && doctor.pending
+        ? `Delete the application from Dr. ${doctorNameById(id)}? Their sign-in account stays, so they can apply again.`
+        : `Delete Dr. ${doctorNameById(id)}?`;
+    if (!confirm(question)) return;
     try {
         const response = await fetchWithAuth(`${API_BASE}/doctors/${id}`, { method: 'DELETE' });
         if (!response.ok) throw new Error(await apiErrorMessage(response, 'Failed to delete doctor'));
-        loadDoctorsDirectory();
+        await reloadActiveTab();
     } catch (err) { alert(err.message); }
 }
 
 async function loadDoctorsDirectory() {
+    markActiveTab(loadDoctorsDirectory);
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = '<p>Loading doctors...</p>';
     try {
@@ -992,9 +965,7 @@ async function loadDoctorsDirectory() {
         if (showActions) html += `<th>Actions</th>`;
         html += `</tr></thead><tbody>`;
 
-        // Patients see the doctors they may be treated by or register with, so an application
-        // nobody has approved does not belong in their directory — it names someone who cannot yet
-        // sign in. Staff see every row, with the applications marked.
+        // Patients don't see unapproved applicants - they can't sign in yet. Staff see every row, applications marked.
         const visible = currentUserRole === 'PATIENT'
             ? doctorsList.filter(doc => !doc.pending)
             : doctorsList;
@@ -1002,7 +973,7 @@ async function loadDoctorsDirectory() {
         visible.forEach(doc => {
             const specs = doc.specializations && doc.specializations.length > 0
                 ? doc.specializations.map(s => esc(s.name || s)).join(', ')
-                : '—';
+                : '-';
             const name = `Dr. ${esc(doc.firstName)} ${esc(doc.lastName)}`
                 + (doc.pending ? ' <span class="pending-badge">Pending approval</span>' : '');
             html += `<tr><td>${doc.id}</td><td>${name}</td><td>${doc.isGP ? 'Yes' : 'No'}</td><td>${specs}</td>`;
@@ -1012,6 +983,9 @@ async function loadDoctorsDirectory() {
                 // practitioners have a patient roster, so the button belongs on those rows.
                 if (doc.isGP) {
                     html += `<button class="action-btn btn-view" onclick="viewGpPatients(${doc.id})">Patients</button> `;
+                }
+                if (currentUserRole === 'ADMIN' && doc.pending) {
+                    html += `<button class="action-btn btn-approve" onclick="approveDoctor(${doc.id})">Approve</button> `;
                 }
                 if (currentUserRole === 'ADMIN') {
                     html += `<button class="action-btn btn-edit" onclick="editDoctor(${doc.id})">Edit</button>
@@ -1030,7 +1004,12 @@ async function loadDoctorsDirectory() {
 
 // ================= VISIT CRUD =================
 
-async function openAddVisitModal() {
+// Where closing the visit modal leads; null means the All Visits list.
+let visitModalReturn = null;
+
+// Opened from a patient's screen, the patient is preselected and closing leads back to their visits.
+async function openAddVisitModal(patientId = null) {
+    visitModalReturn = patientId ? () => viewPatientVisitsDirect(patientId) : null;
     await Promise.all([fetchDoctorsList(), fetchPatientsList()]);
     document.getElementById('visitForm').reset();
     document.getElementById('visitId').value = '';
@@ -1041,17 +1020,18 @@ async function openAddVisitModal() {
     currentEditVisitId = null;
 
     const now = new Date();
-    const today = now.toISOString().split('T')[0];
+    const today = localIsoDate(now);
     const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
 
     document.getElementById('visitDate').value = today;
     document.getElementById('visitTime').value = timeStr;
 
-    populateVisitSelects();
+    populateVisitSelects(patientId);
     openModal('visitModal');
 }
 
 async function editVisit(id) {
+    visitModalReturn = null;
     await Promise.all([fetchDoctorsList(), fetchPatientsList()]);
     // Fetch the full visit with clinical data from the server
     let visit;
@@ -1070,8 +1050,7 @@ async function editVisit(id) {
     document.getElementById('visitTime').value = visit.visitTime;
     document.getElementById('visitModalTitle').innerText = 'Edit Visit';
     document.getElementById('visitBasicFields').style.display = 'block';
-    // Editing an existing visit shows the fields and the clinical data together, so the read-only
-    // recap is not needed — and must not linger from a previous create.
+    // Fields and clinical data show together here, so the recap must not linger from a previous create.
     document.getElementById('visitSummary').style.display = 'none';
 
     populateVisitSelects(visit.patientId, visit.doctorId);
@@ -1092,9 +1071,8 @@ function populateVisitSelects(selectedPatientId = null, selectedDoctorId = null)
     });
 
     docSelect.innerHTML = '<option value="">-- Select Doctor --</option>';
-    // Applicants nobody has approved are left out: they hold no DOCTOR role, so a visit recorded
-    // against one names an examiner who cannot sign into the system. The doctor already on an
-    // existing visit stays selectable, so editing that visit does not silently repoint it.
+    // Unapproved applicants are left out (no DOCTOR role yet). The visit's current doctor stays selectable,
+    // so editing doesn't silently repoint it.
     doctorsList
         .filter(d => !d.pending || d.id === selectedDoctorId)
         .forEach(d => {
@@ -1119,13 +1097,7 @@ function populateVisitSelects(selectedPatientId = null, selectedDoctorId = null)
 
 let currentEditVisitId = null;
 
-/**
- * The clinical data last rendered for the open visit, and the sick leave being edited.
- *
- * WHY the visit is held rather than passed: the edit handlers need the current text to prefill, and
- * an onclick attribute carrying it would break on the first apostrophe — exactly what TEST_PLAN
- * 6.4c guards against elsewhere. Handlers take an id and read the value from here instead.
- */
+// The open visit's clinical data, so handlers can look text up by id - text in an onclick breaks on an apostrophe.
 let currentVisitClinicalData = null;
 let editingSickLeaveId = null;
 
@@ -1157,6 +1129,8 @@ async function submitVisitForm(e) {
         }
         const savedVisit = await response.json();
         currentEditVisitId = savedVisit.id;
+        // So "Edit details" after a create updates this visit instead of POSTing a duplicate.
+        document.getElementById('visitId').value = savedVisit.id;
 
         // Swap the form for a read-only recap, then open the clinical-data step.
         document.getElementById('visitBasicFields').style.display = 'none';
@@ -1193,6 +1167,76 @@ function showClinicalDataSection(visit) {
     if (slFrom && visit.visitDate) slFrom.value = visit.visitDate;
 
     renderExistingClinicalData(visit);
+    loadDiagnosisSuggestions();
+}
+
+// Every diagnosis name already recorded, most used first - offered so one condition isn't split across spellings.
+let diagnosisNames = [];
+
+async function loadDiagnosisSuggestions() {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/reports/diagnoses/common`);
+        if (res.ok) diagnosisNames = (await res.json()).map(c => c.diagnosisName);
+    } catch (e) { console.error('Error loading diagnosis suggestions', e); }
+}
+
+// A themed stand-in for <datalist>, whose native popup can't be styled.
+function suggestionBox(input) {
+    return input.parentNode.querySelector('.suggestions');
+}
+
+function showSuggestions(input) {
+    const box = suggestionBox(input);
+    const typed = input.value.trim().toLowerCase();
+    const matches = typed
+        ? diagnosisNames.filter(n => n.toLowerCase().includes(typed) && n.toLowerCase() !== typed).slice(0, 8)
+        : [];
+    box.innerHTML = matches.map(n => `<div class="suggestion">${esc(n)}</div>`).join('');
+    box.style.display = matches.length ? 'block' : 'none';
+    box.dataset.active = '-1';
+}
+
+function hideSuggestions(input) {
+    const box = suggestionBox(input);
+    if (box) box.style.display = 'none';
+}
+
+// mousedown rather than click, so the input keeps focus and its blur doesn't close the list first.
+function pickSuggestion(event) {
+    const item = event.target.closest('.suggestion');
+    if (!item) return;
+    event.preventDefault();
+    const input = event.currentTarget.parentNode.querySelector('input');
+    input.value = item.textContent;
+    hideSuggestions(input);
+}
+
+// Arrows move through the open list, Enter takes the highlighted name, Escape closes it.
+// Returns true when the key was used, so the caller doesn't also add, save or cancel.
+function handleSuggestionKey(event) {
+    const box = suggestionBox(event.target);
+    const items = box && box.style.display === 'block' ? [...box.querySelectorAll('.suggestion')] : [];
+    if (items.length === 0) return false;
+    let active = Number(box.dataset.active);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        active = event.key === 'ArrowDown' ? (active + 1) % items.length : (active <= 0 ? items.length - 1 : active - 1);
+        items.forEach((el, i) => el.classList.toggle('active', i === active));
+        box.dataset.active = String(active);
+        return true;
+    }
+    if (event.key === 'Enter' && active >= 0) {
+        event.preventDefault();
+        event.target.value = items[active].textContent;
+        hideSuggestions(event.target);
+        return true;
+    }
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        hideSuggestions(event.target);
+        return true;
+    }
+    return false;
 }
 
 function renderExistingClinicalData(visit) {
@@ -1202,13 +1246,7 @@ function renderExistingClinicalData(visit) {
     const diagList = document.getElementById('diagnosisList');
     if (visit.diagnoses && visit.diagnoses.length > 0) {
         diagList.innerHTML = visit.diagnoses.map(d =>
-            `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(56, 189, 248, 0.1); border: 1px solid #1E3A5F; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
-                <span style="color: #E2E8F0;">${esc(d.name)}</span>
-                <span style="white-space: nowrap;">
-                    <button type="button" onclick="editDiagnosis(${d.id})" class="btn-inline-edit" title="Edit diagnosis">Edit</button>
-                    <button type="button" onclick="removeDiagnosis(${d.id})" class="btn-remove" title="Remove diagnosis">✕</button>
-                </span>
-            </div>`
+            clinicalItemRow('diagnosis', d.id, d.name, 'rgba(56, 189, 248, 0.1)', '#1E3A5F')
         ).join('');
     } else {
         diagList.innerHTML = '<p style="color: #64748B; font-size: 0.85rem; margin: 0;">No diagnoses yet.</p>';
@@ -1218,13 +1256,7 @@ function renderExistingClinicalData(visit) {
     const prescList = document.getElementById('prescriptionList');
     if (visit.prescriptions && visit.prescriptions.length > 0) {
         prescList.innerHTML = visit.prescriptions.map(p =>
-            `<div style="display: flex; justify-content: space-between; align-items: center; background: rgba(16, 185, 129, 0.1); border: 1px solid #065F46; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">
-                <span style="color: #E2E8F0;">${esc(p.note)}</span>
-                <span style="white-space: nowrap;">
-                    <button type="button" onclick="editPrescription(${p.id})" class="btn-inline-edit" title="Edit prescription">Edit</button>
-                    <button type="button" onclick="removePrescription(${p.id})" class="btn-remove" title="Remove prescription">✕</button>
-                </span>
-            </div>`
+            clinicalItemRow('prescription', p.id, p.note, 'rgba(16, 185, 129, 0.1)', '#065F46')
         ).join('');
     } else {
         prescList.innerHTML = '<p style="color: #64748B; font-size: 0.85rem; margin: 0;">No prescriptions yet.</p>';
@@ -1253,6 +1285,31 @@ function renderExistingClinicalData(visit) {
     renderSickLeaveFormMode();
 }
 
+// One diagnosis or prescription; the one being edited turns into a text box in place.
+function clinicalItemRow(kind, id, text, background, border) {
+    const editing = editingClinicalItem && editingClinicalItem.kind === kind && editingClinicalItem.id === id;
+    const verb = kind === 'diagnosis' ? 'Diagnosis' : 'Prescription';
+    const input = `<input type="text" id="clinicalEditInput" value="${esc(text)}" autocomplete="off" onkeydown="onClinicalEditKey(event)"`;
+    const field = kind === 'diagnosis'
+        ? `<div class="suggest-wrap" style="margin-right: 0.5rem;">
+               ${input} oninput="showSuggestions(this)" onblur="hideSuggestions(this)">
+               <div class="suggestions" onmousedown="pickSuggestion(event)"></div>
+           </div>`
+        : `${input} style="flex: 1; margin-right: 0.5rem;">`;
+    const body = editing
+        ? `${field}
+           <span style="white-space: nowrap;">
+               <button type="button" onclick="saveClinicalEdit()" class="btn-inline-edit">Save</button>
+               <button type="button" onclick="cancelClinicalEdit()" class="btn-inline-edit">Cancel</button>
+           </span>`
+        : `<span style="color: #E2E8F0;">${esc(text)}</span>
+           <span style="white-space: nowrap;">
+               <button type="button" onclick="edit${verb}(${id})" class="btn-inline-edit" title="Edit ${kind}">Edit</button>
+               <button type="button" onclick="remove${verb}(${id})" class="btn-remove" title="Remove ${kind}">✕</button>
+           </span>`;
+    return `<div style="display: flex; justify-content: space-between; align-items: center; background: ${background}; border: 1px solid ${border}; padding: 0.4rem 0.75rem; border-radius: 8px; margin-bottom: 0.3rem;">${body}</div>`;
+}
+
 /** Keeps the sick-leave form's button saying what pressing it will do. */
 function renderSickLeaveFormMode() {
     const button = document.getElementById('sickLeaveSubmitBtn');
@@ -1263,14 +1320,8 @@ function renderSickLeaveFormMode() {
     if (cancel) cancel.style.display = editing ? 'inline-block' : 'none';
 }
 
-/**
- * Closes the clinical-data step, asking first if the visit has no diagnosis.
- *
- * WHY a warning and not a rule: the assignment has the doctor give a diagnosis and "евентуално"
- * prescribe treatment or issue a sick leave — possibly, not necessarily — but it treats the
- * diagnosis itself as the point of the visit. The live database already holds one visit with none,
- * recorded through this screen, which is what a silent close produces.
- */
+// Warns, doesn't block, on a visit with no diagnosis - the spec makes treatment and sick leave optional
+// ("евентуално") but treats the diagnosis as the point of the visit.
 function finishVisit() {
     const noDiagnosis = currentVisitClinicalData
         && (!currentVisitClinicalData.diagnoses || currentVisitClinicalData.diagnoses.length === 0);
@@ -1300,6 +1351,7 @@ async function addDiagnosisToVisit() {
         });
         if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to add diagnosis'));
         input.value = '';
+        hideSuggestions(input);
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
 }
@@ -1318,11 +1370,7 @@ async function addPrescriptionToVisit() {
     } catch (err) { alert(err.message); }
 }
 
-/**
- * Issues a sick leave, or saves the one being edited.
- * The two share a body — SickLeaveRequest is the same record for POST and PUT — so they share the
- * form rather than duplicating a date picker and its 1–365 bound.
- */
+// Issues a sick leave or saves the one being edited - POST and PUT take the same SickLeaveRequest, so one form.
 async function addSickLeaveToVisit() {
     const validFrom = document.getElementById('newSickLeaveFrom').value;
     const validForDays = document.getElementById('newSickLeaveDays').value;
@@ -1365,44 +1413,57 @@ function cancelEditSickLeave() {
     if (currentVisitClinicalData) renderExistingClinicalData(currentVisitClinicalData);
 }
 
-/**
- * Corrects a diagnosis in place.
- * WHY editing rather than delete-and-re-add: the specification names editing for diagnoses and
- * sick leaves, and re-adding records DELETE + CREATE in the audit log where a correction happened.
- */
-async function editDiagnosis(id) {
-    const current = (currentVisitClinicalData.diagnoses || []).find(d => d.id === id);
-    if (!current) return;
-    const name = prompt('Diagnosis:', current.name);
-    if (name === null) return;
-    if (!name.trim()) { alert('Please enter a diagnosis name.'); return; }
-    if (name.trim() === current.name) return;
-    try {
-        const res = await fetchWithAuth(`${API_BASE}/visits/diagnosis/${id}`, {
-            method: 'PUT', body: JSON.stringify({ visitId: currentEditVisitId, name: name.trim() })
-        });
-        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to update diagnosis'));
-        await refreshVisitAndRender();
-    } catch (err) { alert(err.message); }
+// Edited in place, not deleted and re-added - the spec names editing, and re-adding would log DELETE + CREATE.
+function editDiagnosis(id) { startClinicalEdit('diagnosis', id); }
+
+function editPrescription(id) { startClinicalEdit('prescription', id); }
+
+// The diagnosis or prescription currently open for editing, as { kind, id }.
+let editingClinicalItem = null;
+
+function startClinicalEdit(kind, id) {
+    editingClinicalItem = { kind, id };
+    renderExistingClinicalData(currentVisitClinicalData);
+    const input = document.getElementById('clinicalEditInput');
+    if (input) { input.focus(); input.select(); }
 }
 
-async function editPrescription(id) {
-    const current = (currentVisitClinicalData.prescriptions || []).find(p => p.id === id);
-    if (!current) return;
-    const note = prompt('Prescription:', current.note);
-    if (note === null) return;
-    if (!note.trim()) { alert('Please enter a prescription.'); return; }
-    if (note.trim() === current.note) return;
+function cancelClinicalEdit() {
+    editingClinicalItem = null;
+    if (currentVisitClinicalData) renderExistingClinicalData(currentVisitClinicalData);
+}
+
+function onClinicalEditKey(event) {
+    if (handleSuggestionKey(event)) return;
+    if (event.key === 'Enter') saveClinicalEdit();
+    else if (event.key === 'Escape') { event.preventDefault(); cancelClinicalEdit(); }
+}
+
+async function saveClinicalEdit() {
+    if (!editingClinicalItem) return;
+    const { kind, id } = editingClinicalItem;
+    const isDiagnosis = kind === 'diagnosis';
+    const items = (isDiagnosis ? currentVisitClinicalData.diagnoses : currentVisitClinicalData.prescriptions) || [];
+    const current = items.find(x => x.id === id);
+    const value = document.getElementById('clinicalEditInput').value.trim();
+    if (!value) { alert(isDiagnosis ? 'Please enter a diagnosis name.' : 'Please enter a prescription.'); return; }
+    if (!current || value === (isDiagnosis ? current.name : current.note)) { cancelClinicalEdit(); return; }
     try {
-        const res = await fetchWithAuth(`${API_BASE}/visits/prescription/${id}`, {
-            method: 'PUT', body: JSON.stringify({ visitId: currentEditVisitId, note: note.trim() })
+        const res = await fetchWithAuth(`${API_BASE}/visits/${kind}/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(isDiagnosis
+                ? { visitId: currentEditVisitId, name: value }
+                : { visitId: currentEditVisitId, note: value })
         });
-        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to update prescription'));
+        if (!res.ok) throw new Error(await apiErrorMessage(res, `Failed to update ${kind}`));
+        editingClinicalItem = null;
         await refreshVisitAndRender();
     } catch (err) { alert(err.message); }
 }
 
 async function removeDiagnosis(id) {
+    const d = (currentVisitClinicalData?.diagnoses || []).find(x => x.id === id);
+    if (!confirm(`Remove the diagnosis${d ? ` "${d.name}"` : ''} from this visit?`)) return;
     try {
         const res = await fetchWithAuth(`${API_BASE}/visits/diagnosis/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to remove diagnosis'));
@@ -1411,6 +1472,8 @@ async function removeDiagnosis(id) {
 }
 
 async function removePrescription(id) {
+    const p = (currentVisitClinicalData?.prescriptions || []).find(x => x.id === id);
+    if (!confirm(`Remove the prescription${p ? ` "${p.note}"` : ''} from this visit?`)) return;
     try {
         const res = await fetchWithAuth(`${API_BASE}/visits/prescription/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to remove prescription'));
@@ -1419,6 +1482,7 @@ async function removePrescription(id) {
 }
 
 async function removeSickLeave(id) {
+    if (!confirm('Remove the sick leave from this visit?')) return;
     try {
         const res = await fetchWithAuth(`${API_BASE}/visits/sickleave/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await apiErrorMessage(res, 'Failed to remove sick leave'));
@@ -1436,6 +1500,7 @@ async function deleteVisit(id) {
 }
 
 async function loadDoctorVisits() {
+    markActiveTab(loadDoctorVisits);
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = '<p>Loading visits...</p>';
     try {
@@ -1461,12 +1526,10 @@ async function loadDoctorVisits() {
         html += `</tr></thead><tbody>`;
 
         visitsList.forEach(v => {
-            // "No diagnosis" rather than a dash: a visit may legitimately end without one — the
-            // assignment says the doctor "евентуално" prescribes treatment — so the empty cell is a
-            // fact about the visit, not a missing value.
+            // "No diagnosis", not a dash - a visit can end without one, so it's a fact about the visit, not a gap.
             const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => d.name).join(', ') : 'No diagnosis';
-            const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => p.note).join('; ') : '—';
-            const slInfo = v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—';
+            const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => p.note).join('; ') : '-';
+            const slInfo = v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} - ${v.sickLeave.validForDays} days` : '-';
             html += `<tr><td>${esc(fmtDate(v.visitDate))} ${esc(fmtTime(v.visitTime))}</td><td>${esc(v.patientName)}</td><td>Dr. ${esc(v.doctorName)}</td><td>${esc(diagNames)}</td><td>${esc(rxNotes)}</td><td>${esc(slInfo)}</td>`;
 
             if (currentUserRole === 'ADMIN' || (currentUserRole === 'DOCTOR' && v.doctorId === currentDoctorId)) {
@@ -1495,11 +1558,7 @@ async function fetchGpRoster(doctorId) {
     return res.json();
 }
 
-/**
- * The distinct patients this doctor has examined, in the same shape as the roster.
- * Built from the visit list because no endpoint answers this directly, and a doctor may read both
- * lists already — this adds no access, only a screen that is no longer blank.
- */
+// Distinct patients this doctor has examined, built from the visit list - no endpoint answers it directly.
 async function fetchPatientsSeenByDoctor(doctorId) {
     const [visitsRes, patientsRes] = await Promise.all([
         fetchWithAuth(`${API_BASE}/visits`),
@@ -1515,6 +1574,7 @@ async function fetchPatientsSeenByDoctor(doctorId) {
 }
 
 async function loadMyPatients() {
+    markActiveTab(loadMyPatients);
     const contentArea = document.getElementById('content-area');
     patientListOrigin = 'mine';
     contentArea.innerHTML = '<p>Loading your patients...</p>';
@@ -1527,33 +1587,30 @@ async function loadMyPatients() {
         const doctor = await docResponse.json();
         currentDoctorId = doctor.id;
 
-        // WHY two sources: only a GP has a roster. The other doctors — two of the five seeded ones —
-        // have patients they have examined but none registered with them, so the roster query
-        // returns nothing and this screen, which is where a doctor lands, was permanently empty for
-        // them. For those, the patients they have seen is the list this screen is asking for.
+        // Only a GP has a roster - other doctors get the patients they've examined, or their landing screen is empty.
         const patients = doctor.isGP
             ? await fetchGpRoster(doctor.id)
             : await fetchPatientsSeenByDoctor(doctor.id);
         const insurance = await fetchInsuranceStatuses();
 
-        const heading = doctor.isGP ? 'My Patients' : 'Patients You Have Seen';
-        let html = `<h3>${heading} (Dr. ${esc(doctor.firstName)} ${esc(doctor.lastName)})</h3>`;
+        // Same heading as the tab; a non-GP is told why the list is who they examined.
+        let html = `<h3>My Patients (Dr. ${esc(doctor.firstName)} ${esc(doctor.lastName)})</h3>`;
+        if (!doctor.isGP) {
+            html += '<p class="muted-label">Patients you have examined. Only a GP has patients registered with them.</p>';
+        }
         if (patients.length === 0) {
             html += doctor.isGP
                 ? '<p>No patients assigned to you.</p>'
                 : '<p>You have not examined any patients yet.</p>';
         } else {
-            // Same columns as All Patients minus the GP column — on a roster it would repeat this
-            // doctor's own name on every row, and All Patients carries it for anyone who needs it.
-            // A doctor looking at their own patients needs the same two things as anywhere else:
-            // the visit history, and whether the patient is covered. Covered is a reading only —
-            // recording a payment is an administrator's action, not visit information, so this
-            // screen has no + Insurance button.
+            // All Patients' columns minus GP (it would be this doctor on every row). Insurance is read-only -
+            // recording a payment is an admin's job.
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Name</th><th onclick="sortTable(1, this)">EGN</th><th onclick="sortTable(2, this)">Insurance</th><th>Actions</th></tr></thead><tbody>';
             patients.forEach(p => {
                 html += `<tr><td>${esc(p.firstName)} ${esc(p.lastName)}</td><td>${esc(p.egn)}</td>`
                      + `<td>${insuranceCell(insurance[p.id])}</td>`
-                     + `<td><button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button></td></tr>`;
+                     + `<td><button class="action-btn btn-view" onclick="viewPatientVisitsDirect(${p.id})">Visits</button> `
+                     + `<button class="action-btn btn-edit" onclick="openAddVisitModal(${p.id})">+ Visit</button></td></tr>`;
             });
             html += '</tbody></table>';
         }
@@ -1564,6 +1621,7 @@ async function loadMyPatients() {
 }
 
 async function loadPatientHistory() {
+    markActiveTab(loadPatientHistory);
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = '<p>Loading patient history...</p>';
     try {
@@ -1585,9 +1643,7 @@ async function loadPatientHistory() {
         if (!vResponse.ok) throw new Error(`HTTP ${vResponse.status}`);
         const visits = await vResponse.json();
 
-        // Three states, not two. insuranceStatus stays null when the check could not be run, and
-        // reporting that as "Lapsed / Unpaid" told patients their contributions were unpaid on
-        // nothing more than a failed request.
+        // Three states: null means the check failed, which must not read as "unpaid".
         const badge = (bg, border, colour, text) =>
             `<span style="display:inline-block; padding: 0.25rem 0.75rem; background: ${bg}; border: 1px solid ${border}; color: ${colour}; border-radius: 20px; font-size: 0.85rem; font-weight: 600;">${text}</span>`;
 
@@ -1595,15 +1651,12 @@ async function loadPatientHistory() {
         if (insuranceStatus === null || typeof insuranceStatus !== 'object') {
             insBadge = badge('rgba(100, 116, 139, 0.2)', '#64748B', '#94A3B8', '? Insurance status unavailable');
         } else {
-            // The run is deliberately not shown here. It counts unbroken months, so a patient who
-            // paid four of six with a gap in the middle reads as "1 of 6" — an understatement next
-            // to a list naming only two unpaid months. The verdict plus those months says
-            // everything without a number that has to be explained.
+            // No run count - with a gap it reads "1 of 6" next to only two unpaid months. The verdict and the months say it all.
             const owed = (insuranceStatus.unpaidMonths || [])
-                .map(m => fmtMonth(m.year, m.month)).join(', ');
+                .map(fmtUnpaidMonth).join(', ');
             insBadge = insuranceStatus.insured
                 ? badge('rgba(16, 185, 129, 0.2)', '#10B981', '#10B981', '✓ Health Insurance Active')
-                : badge('rgba(239, 68, 68, 0.2)', '#EF4444', '#EF4444', '✕ Health Insurance Lapsed');
+                : badge('rgba(239, 68, 68, 0.2)', '#EF4444', '#EF4444', '✕ Not Insured');
             // Naming the months turns "you are short" into something the patient can act on.
             if (owed) {
                 insBadge += `<div class="muted" style="font-size: 0.8rem; margin-top: 0.35rem;">Not yet paid: ${esc(owed)}</div>`;
@@ -1629,8 +1682,8 @@ async function loadPatientHistory() {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
                 const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : 'No diagnosis';
-                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
-                const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
+                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '-';
+                const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '-';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });
             html += '</tbody></table>';
@@ -1654,15 +1707,16 @@ async function renderPendingApprovals() {
         const rows = pending.map(d =>
             `<tr>
                 <td>Dr. ${esc(d.doctorName)}</td>
-                <td>${d.registeredAt ? esc(fmtDate(d.registeredAt)) : '—'}</td>
-                <td><button class="action-btn btn-approve" onclick="approveDoctor(${d.doctorId})">Approve</button></td>
+                <td>${d.registeredAt ? esc(fmtDate(d.registeredAt)) : '-'}</td>
+                <td><button class="action-btn btn-approve" onclick="approveDoctor(${d.doctorId})">Approve</button>
+                    <button class="action-btn btn-delete" onclick="deleteDoctor(${d.doctorId})">Delete</button></td>
             </tr>`
         ).join('');
 
         return `
             <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
                 <h4 style="color: #F59E0B; margin-bottom: 0.75rem;">Doctors Awaiting Approval (${pending.length})</h4>
-                <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">Approving grants the <strong>DOCTOR</strong> role and offers the edit form, where specializations and GP status are set — an applicant can state neither. Until then they are marked <em>Pending approval</em> in the Doctors directory and are left out of the visit form, the patients' directory and report e.</p>
+                <p style="color: #94A3B8; font-size: 0.88rem; margin-bottom: 0.75rem;">Approving grants the <strong>DOCTOR</strong> role and offers the edit form, where specializations and GP status are set - an applicant can state neither. Until then they are marked <em>Pending approval</em> in the Doctors directory and are left out of the visit form, the patients' directory and report e.</p>
                 <table class="data-table" style="margin-top: 0.5rem;">
                     <thead><tr><th>Name</th><th>Registered</th><th>Action</th></tr></thead>
                     <tbody>${rows}</tbody>
@@ -1675,6 +1729,7 @@ async function renderPendingApprovals() {
 }
 
 async function loadFullReportsDashboard() {
+    markActiveTab(loadFullReportsDashboard);
     const contentArea = document.getElementById('content-area');
 
     // Pending approvals are an administrator concern; the endpoint refuses doctors, so don't ask.
@@ -1683,10 +1738,7 @@ async function loadFullReportsDashboard() {
         pendingHtml = await renderPendingApprovals();
     }
 
-    // Cards run a–j, the order the assignment lists them in. That order also happens to group
-    // cleanly by subject — a,b diagnoses; c,d,e doctors; f,g,h visits; i,j sick leaves — so
-    // following the specification and keeping the colour coding are the same arrangement, not a
-    // compromise between two. Each card carries its letter so the mapping needs no explaining.
+    // Cards in the spec's order a-j, which also groups them by subject: a,b diagnoses; c-e doctors; f-h visits; i,j sick leave.
     let html = `
         <h3>Reports</h3>
         <p style="color: #94A3B8; margin-bottom: 1.5rem;">Select a report to run it against the current records.</p>
@@ -1744,10 +1796,10 @@ async function loadFullReportsDashboard() {
                 <h4>Sick Leaves Issued per Doctor</h4>
                 <p>How many sick leaves each doctor has issued.</p>
             </div>
-            <div class="report-card" data-group="insurance" onclick="fetchReport('/reports/patients/insurance', 'Unpaid Months per Patient', ['Patient ID', 'Patient', 'EGN', 'Unpaid Months', 'Status'], r => [r.patientId, r.patientName, r.egn, r.unpaidMonths.map(m => fmtMonth(m.year, m.month)).join(', '), r.insured ? 'Insured' : 'Not insured'], false, r => r.unpaidMonths.length > 0)">
+            <div class="report-card" data-group="insurance" onclick="fetchReport('/reports/patients/insurance', 'Unpaid Months per Patient', ['Patient ID', 'Patient', 'EGN', 'Unpaid Months', 'Status'], r => [r.patientId, r.patientName, r.egn, r.unpaidMonths.map(fmtUnpaidMonth).join(', '), r.insured ? 'Insured' : 'Not insured'], false, r => r.unpaidMonths.length > 0)">
                 <span class="report-group">Insurance</span>
                 <h4>Unpaid Months per Patient</h4>
-                <p>Which of the last six months each patient still owes. Anyone fully paid is left out.</p>
+                <p>Which months each patient still owes for the six-month check. Anyone fully paid is left out.</p>
             </div>
         </div>
 
@@ -1762,13 +1814,11 @@ async function renderReportFilterPanel(type) {
     const resultsArea = document.getElementById('report-results');
     resultsArea.innerHTML = '';
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    // TEST_PLAN §4.3g runs these reports over "the last 12 months", so that is the default range.
-    // It used to be the literal 2026-01-01, which stops meaning "a year back" the moment the year
-    // turns and silently narrows or widens what the report covers.
+    const todayStr = localIsoDate();
+    // Defaults to the last 12 months, computed from today so it never goes stale.
     const yearAgo = new Date();
     yearAgo.setFullYear(yearAgo.getFullYear() - 1);
-    const yearAgoStr = yearAgo.toISOString().split('T')[0];
+    const yearAgoStr = localIsoDate(yearAgo);
 
     if (type === 'diagnosis') {
         // Fetch actual diagnosis names from the database
@@ -1875,16 +1925,17 @@ async function renderReportFilterPanel(type) {
             </div>
         `;
     }
+    // The panel renders below all the cards, out of view on a normal screen.
+    filterPanel.scrollIntoView({ block: 'start' });
 }
 
 function runDiagnosisReport() {
     const diag = document.getElementById('inlineDiagSelect').value;
-    // §3a asks for "обобщени данни за броя на пациентите с дадена диагноза" — the *number* of
-    // patients with a given diagnosis, which a list of names contains but never states.
-    fetchReport(`/reports/diagnoses/patients?diagnosis=${encodeURIComponent(diag)}`, `Patients diagnosed with: ${diag}`, ['ID', 'Patient Name', 'EGN', 'GP'], p => [p.id, p.firstName + ' ' + p.lastName, p.egn, p.gpDoctorName || '—'], true, null, { unit: 'patients' });
+    // §3a asks for the NUMBER of patients with a diagnosis ("броя на пациентите"), which a list of names never states.
+    fetchReport(`/reports/diagnoses/patients?diagnosis=${encodeURIComponent(diag)}`, `Patients diagnosed with: ${diag}`, ['ID', 'Patient Name', 'EGN', 'GP'], p => [p.id, p.firstName + ' ' + p.lastName, p.egn, p.gpDoctorName || '-'], true, null, { unit: 'patients' });
 }
 
-/** Report c — the patients registered with one general practitioner. */
+// Report c - the patients registered with one general practitioner.
 function runGpPatientsReport() {
     const gpId = document.getElementById('inlineGpSelect').value;
     if (!gpId) { alert('Please select a general practitioner.'); return; }
@@ -1924,28 +1975,19 @@ function runPatientVisitsReport() {
     const patObj = patientsList.find(p => String(p.id) === String(patId));
     const patName = patObj ? `${patObj.firstName} ${patObj.lastName}` : `ID ${patId}`;
 
-    // Sick leave is part of the history the assignment asks to be tracked — "излизал ли е в
-    // болнични пациентът и за колко време" — so it belongs in this report, not only on the
-    // patient's own dashboard.
+    // Sick leave is part of the history the spec tracks ("излизал ли е в болнични ... и за колко време"), so it's here too.
     fetchReport(`/visits/patient/${patId}`, `Visits for Patient: ${patName}`,
         ['Visit ID', 'Date', 'Doctor', 'Diagnosis', 'Prescription', 'Sick Leave'], v => [
         v.id,
         fmtDate(v.visitDate) + ' ' + fmtTime(v.visitTime),
         'Dr. ' + v.doctorName,
         (v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d=>d.name).join(', ') : 'No diagnosis'),
-        (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '—'),
-        (v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} — ${v.sickLeave.validForDays} days` : '—')
+        (v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p=>p.note).join('; ') : '-'),
+        (v.sickLeave ? `${fmtDate(v.sickLeave.validFrom)} - ${v.sickLeave.validForDays} days` : '-')
     ], true);
 }
 
-/**
- * Turns a failed API response into a message worth showing a user.
- * WHY: the backend already sends a per-field breakdown in `details` —
- * {"firstName":"First name is required","egn":"EGN must be exactly 10 digits"} — but the UI only
- * ever read the top-level `message`, so every rejected form said "Request validation failed" and
- * left the user guessing which field was wrong. The field messages come from the validation
- * annotations and are already written as sentences, so they need no further translation.
- */
+// Prefers the per-field messages in `details`, so a rejected form names the field instead of "Request validation failed".
 async function apiErrorMessage(response, fallback) {
     const body = await response.json().catch(() => null);
     if (body && body.details && Object.keys(body.details).length > 0) {
@@ -1958,25 +2000,14 @@ async function apiErrorMessage(response, fallback) {
 // The most recently rendered report, so Export CSV writes exactly what is on screen.
 let lastReport = null;
 
-/**
- * Quotes one CSV field.
- * The leading apostrophe on =, +, -, @ stops a spreadsheet treating a value as a formula: a
- * diagnosis or patient name beginning with one of those characters would otherwise be executed
- * by Excel when the exported file is opened.
- */
+// Quotes one CSV field. The leading apostrophe on = + - @ stops Excel running a value as a formula.
 function csvCell(value) {
     let s = value === null || value === undefined ? '' : String(value);
     if (/^[=+\-@]/.test(s)) s = "'" + s;
     return '"' + s.replace(/"/g, '""') + '"';
 }
 
-/**
- * Exports the report currently on screen as CSV.
- * WHY client-side: previously only three of the ten reports had an export, each needing its own
- * backend endpoint. Building the file from the rendered rows gives every report the same button
- * for free, and guarantees the download matches what the user is looking at — including any
- * filters they applied.
- */
+// Built from the rendered rows, so every report can export and the file always matches the screen, filters included.
 function exportCurrentReport() {
     if (!lastReport || lastReport.rows.length === 0) return;
 
@@ -1999,11 +2030,7 @@ function exportCurrentReport() {
     URL.revokeObjectURL(url);
 }
 
-/**
- * Which rows share the highest value in the ranked column — all of them, not the first.
- * Returns an empty set when the report is not ranked or the column holds nothing numeric, so a
- * malformed rank option degrades to a plain table rather than to a wrong answer.
- */
+// Rows tied for the top value in the ranked column - ALL of them. Empty when unranked, so it falls back to a plain table.
 function topRowIndexes(rows, rank) {
     const leaders = new Set();
     if (!rank) return leaders;
@@ -2014,18 +2041,8 @@ function topRowIndexes(rows, rank) {
     return leaders;
 }
 
-/**
- * Runs a report and renders it.
- *
- * @param options optional presentation, for the clauses that ask a question rather than for a list:
- *   - {@code unit} — the plural noun for the row count printed above the table ("patients",
- *     "sick leaves"). The assignment asks card a for "броя на пациентите" — the *number* of
- *     patients — which a list of names does not state, so every report states its count.
- *   - {@code rank} — {@code { valueColumn, labelColumn, lead }}. Clauses b, i and j ask which
- *     diagnosis, month or doctor comes top, and write it "диагнозата/диагнозите" — the slash
- *     anticipating a tie. A ranked table contains the answer without giving it, so this names every
- *     row tied for the highest value and highlights them.
- */
+// options.unit: plural noun for the row count above the table - card a asks for the NUMBER of patients.
+// options.rank: { valueColumn, labelColumn, lead } - names and highlights every row tied for top (b, i, j allow ties).
 async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel = false, rowFilter = null, options = {}) {
     const filterPanel = document.getElementById('report-filter-panel');
     if (!keepFilterPanel && filterPanel) {
@@ -2040,8 +2057,7 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
 
-        // A report may present a subset of an endpoint — "who owes something" is the insurance
-        // status list minus everyone who owes nothing, not a second query.
+        // A report may show a subset of an endpoint - "who owes something" is the insurance list minus those who owe nothing.
         const source = rowFilter ? data.filter(rowFilter) : data;
         const rows = source.map(rowMapper);
         // Remember what is on screen so the export button below writes exactly that.
@@ -2080,6 +2096,8 @@ async function fetchReport(endpoint, title, headers, rowMapper, keepFilterPanel 
     } catch (err) {
         resultsArea.innerHTML = `<p class="error-text">Error generating report: ${esc(err.message)}</p>`;
     }
+    // Results render below all the cards; scroll once they are in, when the page is tall enough.
+    resultsArea.scrollIntoView({ block: 'start' });
 }
 
 // ================= UTILS =================
@@ -2108,13 +2126,15 @@ function filterTable() {
 let sortDirections = {};
 let sortTableSeq = 0;
 
-/**
- * Sorts one table by a column, alternating direction on repeated clicks.
- *
- * The direction is keyed by table *and* column. Keying it by column index alone meant sorting
- * column 0 of one table left the next table's first click starting descending, because both shared
- * the key "0" — and several screens show more than one table.
- */
+// dd.mm.yyyy [hh:mm] and mm.yyyy as yyyymmddhhmm / yyyymm - parseFloat would read "27.01.2026" as 27.01.
+function dateSortKey(text) {
+    let m = text.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+    if (m) return m[3] + m[2] + m[1] + (m[4] || '00') + (m[5] || '00');
+    m = text.match(/^(\d{2})\.(\d{4})\b/);
+    return m ? m[2] + m[1] : null;
+}
+
+// Sorts by a column, toggling direction. Keyed by table AND column - some screens show more than one table.
 function sortTable(columnIndex, thElement) {
     const table = thElement.closest('table');
     const tbody = table.querySelector('tbody');
@@ -2130,6 +2150,11 @@ function sortTable(columnIndex, thElement) {
     rows.sort((rowA, rowB) => {
         const cellA = rowA.children[columnIndex].innerText.trim();
         const cellB = rowB.children[columnIndex].innerText.trim();
+        const dateA = dateSortKey(cellA);
+        const dateB = dateSortKey(cellB);
+        if (dateA && dateB) {
+            return ascending ? dateA.localeCompare(dateB) : dateB.localeCompare(dateA);
+        }
         const numA = parseFloat(cellA);
         const numB = parseFloat(cellB);
         if (!isNaN(numA) && !isNaN(numB)) {
@@ -2146,18 +2171,10 @@ function sortTable(columnIndex, thElement) {
 // ================= AUDIT LOGS =================
 const AUDIT_PAGE_SIZE = 50;
 
-/**
- * One page of the audit feed.
- *
- * WHY this screen pages at the database while the reports do not: the log grows with every action
- * — twenty-three call sites write to it and the seed contains none — so it is the one list with no
- * natural end. The reports answer a question and must answer it in full.
- *
- * Searching is the header box, which filters the rows on the page rather than querying the
- * database. That is a deliberate limit at this size: it searches the 50 entries on screen, and
- * Prev / Next reach the rest.
- */
+// Paged at the database - unlike the reports, the log has no natural end. The header search
+// filters only the 50 rows on screen; Prev / Next reach the rest.
 async function loadAuditLogs(page = 0) {
+    markActiveTab(loadAuditLogs);
     const contentArea = document.getElementById('content-area');
     contentArea.innerHTML = '<p>Loading audit logs...</p>';
     try {
@@ -2181,7 +2198,7 @@ async function loadAuditLogs(page = 0) {
             html += '<th onclick="sortTable(0, this)">Timestamp</th><th onclick="sortTable(1, this)">Action</th><th onclick="sortTable(2, this)">Entity</th><th onclick="sortTable(3, this)">Record</th><th onclick="sortTable(4, this)">Actor</th>';
             html += '</tr></thead><tbody>';
             logs.forEach(l => {
-                const dateStr = l.createdAt ? fmtDateTime(l.createdAt) : '—';
+                const dateStr = l.createdAt ? fmtDateTime(l.createdAt) : '-';
                 // Older entries predate entity_label, so fall back to the id alone.
                 const record = l.entityLabel
                     ? `${esc(l.entityLabel)} <span class="muted">#${esc(String(l.entityId))}</span>`
@@ -2249,13 +2266,8 @@ async function submitGpChangeForm(e) {
 
 // ================= HEALTH INSURANCE =================
 
-/**
- * Snaps the coverage field to the first of whichever month was picked.
- * WHY: insurance is bought by the month, so the server stores the 1st regardless of the day chosen.
- * Without this the form would accept 07.09.2026, report success, and hold 01.09.2026 - the input
- * would be quietly lying about what it saved. Snapping on change keeps the two the same.
- * A month input would express this better, but Firefox and Safari fall back to a plain text box.
- */
+// Snaps to the 1st of the month, which is what the server stores anyway, so the field shows what gets saved.
+// (A month input would fit better, but Firefox and Safari fall back to a plain text box.)
 function snapCoverageToFirstOfMonth(input) {
     if (input.value) {
         input.value = input.value.slice(0, 8) + '01';
@@ -2268,21 +2280,14 @@ function openRecordInsuranceModal(patientId) {
     document.getElementById('insurancePatientName').value = patientNameById(patientId);
     document.getElementById('insuranceModalTitle').textContent = 'Record Health Insurance Payment';
     document.getElementById('insuranceSubmitBtn').textContent = 'Record Payment';
-    const today = new Date().toISOString().split('T')[0];
-    // The coverage field identifies a month, not a day: the server normalises whatever is picked to
-    // the first of that month, so defaulting to the 1st keeps the form showing what gets stored.
-    // paidOn is a real date and stays on today.
+    const today = localIsoDate();
+    // Coverage defaults to the 1st (only the month counts); paidOn is a real date and stays on today.
     document.getElementById('insuranceDate').value = today.slice(0, 8) + '01';
     document.getElementById('insurancePaidOn').value = today;
     openModal('insuranceModal');
 }
 
-/**
- * The same form, correcting a payment already recorded.
- * WHY correcting matters: one payment per covered month is a rule, so a payment entered against the
- * wrong month occupies that month and reports the patient as covered for it. Before this the only
- * record of it was the month it wrongly filled.
- */
+// Corrects a recorded payment - one entered against the wrong month blocks that month and shows them covered for it.
 function openEditInsuranceModal(patientId, paymentId) {
     const payment = insurancePaymentsOnScreen.find(p => p.id === paymentId);
     if (!payment) return;
@@ -2335,13 +2340,7 @@ async function submitInsurancePayment(e) {
 let insurancePaymentsOnScreen = [];
 let managingInsuranceForPatientId = null;
 
-/**
- * Everything recorded for one patient's health insurance, and the controls to correct it.
- *
- * WHY a screen rather than a second modal: the specification gives administrators the right to see
- * and edit all information, and until now contributions could only be written. The verdict alone
- * cannot show which month is wrong — only the individual payments can.
- */
+// Every insurance payment for one patient, with edit controls - the verdict alone can't show which month is wrong.
 async function manageInsurance(patientId) {
     const contentArea = document.getElementById('content-area');
     managingInsuranceForPatientId = patientId;
@@ -2356,12 +2355,12 @@ async function manageInsurance(patientId) {
         const status = statusRes.ok ? await statusRes.json() : null;
 
         const name = patientNameById(patientId);
-        let html = `<h3>Health Insurance — ${esc(name)}</h3>`;
+        let html = `<h3>Health Insurance - ${esc(name)}</h3>`;
         if (status) {
             html += `<p>${insuranceCell(status)}</p>`;
             if (status.unpaidMonths && status.unpaidMonths.length > 0) {
-                html += `<p class="muted-label">Unpaid in the last six months: `
-                     + status.unpaidMonths.map(m => esc(fmtMonth(m.year, m.month))).join(', ') + '</p>';
+                html += `<p class="muted-label">Unpaid months: `
+                     + status.unpaidMonths.map(m => esc(fmtUnpaidMonth(m))).join(', ') + '</p>';
             }
         }
         html += `<button class="btn btn-primary btn-add-new" onclick="openRecordInsuranceModal(${patientId})">+ Record Payment</button> `;
@@ -2403,14 +2402,8 @@ async function deleteInsurancePayment(patientId, paymentId) {
 }
 
 // ================= DIRECT PATIENT VISITS LOOKUP =================
-/**
- * Grants a self-registered doctor the DOCTOR role, then refreshes the dashboard so the
- * approved entry disappears from the pending banner.
- *
- * Approval takes no specializations and no GP status — the applicant cannot state either — so it
- * offers the edit form straight afterwards, which is where both are set. Declining leaves an
- * approved doctor with no specialization, which is valid, not broken.
- */
+// Grants DOCTOR, refreshes the current screen, then opens the edit form - an applicant can't state specializations
+// or GP status. Cancelling there leaves them approved with none, which is valid.
 async function approveDoctor(doctorId) {
     if (!confirm('Approve this doctor and grant them the DOCTOR role?')) return;
     try {
@@ -2418,21 +2411,17 @@ async function approveDoctor(doctorId) {
         if (!res.ok) {
             throw new Error(await apiErrorMessage(res, `HTTP ${res.status}`));
         }
-        await loadFullReportsDashboard();
-        if (confirm('Approved. Set their specializations and GP status now?')) {
-            await fetchDoctorsList();
-            await editDoctor(doctorId);
-        }
+        await reloadActiveTab();
+        // Straight into the form; its Cancel leaves them approved with no specialization.
+        await fetchDoctorsList();
+        await editDoctor(doctorId);
+        document.getElementById('doctorModalTitle').innerText = 'Approved - set specializations and GP status';
     } catch (err) {
         alert('Could not approve doctor: ' + err.message);
     }
 }
 
-/**
- * Requirement 3c — "Списък с пациенти, които имат даден личен лекар".
- * Renders into the main content area rather than through fetchReport, because the reports
- * dashboard elements that helper writes into do not exist on the Doctors Directory screen.
- */
+// Report c from the Doctors screen. Renders into the content area - fetchReport's elements only exist on Reports.
 async function viewGpPatients(doctorId) {
     const doctorName = doctorNameById(doctorId);
     const contentArea = document.getElementById('content-area');
@@ -2474,7 +2463,11 @@ async function viewPatientVisitsDirect(patientId) {
 
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
             <h3>Visits for Patient: ${esc(patientName)}</h3>
-            <button class="btn btn-secondary" onclick="backToPatientList()">← Back to Patients</button>
+            <div style="display:flex; gap:0.5rem;">
+                ${currentUserRole === 'ADMIN' || currentUserRole === 'DOCTOR'
+                    ? `<button class="btn btn-primary" onclick="openAddVisitModal(${patientId})">+ Add Visit</button>` : ''}
+                <button class="btn btn-secondary" onclick="backToPatientList()">← Back to Patients</button>
+            </div>
         </div>`;
 
         if (visits.length === 0) {
@@ -2483,8 +2476,8 @@ async function viewPatientVisitsDirect(patientId) {
             html += '<table class="data-table"><thead><tr><th onclick="sortTable(0, this)">Date</th><th onclick="sortTable(1, this)">Doctor</th><th onclick="sortTable(2, this)">Diagnosis</th><th onclick="sortTable(3, this)">Prescription</th><th onclick="sortTable(4, this)">Sick Leave</th></tr></thead><tbody>';
             visits.forEach(v => {
                 const diagNames = v.diagnoses && v.diagnoses.length > 0 ? v.diagnoses.map(d => esc(d.name)).join(', ') : 'No diagnosis';
-                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '—';
-                const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '—';
+                const rxNotes = v.prescriptions && v.prescriptions.length > 0 ? v.prescriptions.map(p => esc(p.note)).join('; ') : '-';
+                const slInfo = v.sickLeave ? `${esc(fmtDate(v.sickLeave.validFrom))} (${esc(String(v.sickLeave.validForDays))} days)` : '-';
                 html += `<tr><td>${esc(fmtDate(v.visitDate))}</td><td>Dr. ${esc(v.doctorName)}</td><td>${diagNames}</td><td>${rxNotes}</td><td>${slInfo}</td></tr>`;
             });
             html += '</tbody></table>';

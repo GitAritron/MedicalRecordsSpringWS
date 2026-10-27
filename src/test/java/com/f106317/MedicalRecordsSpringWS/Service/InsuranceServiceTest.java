@@ -83,8 +83,8 @@ class InsuranceServiceTest {
         InsuranceStatusResponse status = insuranceService.getStatus(1L);
 
         assertFalse(status.insured());
-        // Neither this month nor last is paid, so there is no anchor and both are owed.
-        assertEquals(2, status.unpaidMonths().size());
+        // No anchor, so the oldest month of the window, last month and this month are all owed.
+        assertEquals(3, status.unpaidMonths().size());
     }
 
     // The window starts on the 1st and ends today, so no future-dated payment can count.
@@ -139,6 +139,26 @@ class InsuranceServiceTest {
         // Insured, with the current month still listed as owed.
         assertEquals(1, status.unpaidMonths().size());
         assertEquals(YearMonth.now().getMonthValue(), status.unpaidMonths().get(0).month());
+    }
+
+    // Paid the last five months, not this one: the verdict counts back from last month, so the gap is 6 months ago.
+    @Test
+    void getStatus_namesTheMonthThatBreaksTheRunWhenThisMonthIsUnpaid() {
+        List<Integer> lastFive = new java.util.ArrayList<>();
+        YearMonth m = YearMonth.now().minusMonths(1);
+        for (int i = 0; i < 5; i++) {
+            lastFive.add(m.getYear() * 100 + m.getMonthValue());
+            m = m.minusMonths(1);
+        }
+        when(insuranceRepository.findCoveredMonthKeys(eq(1L), any(), any())).thenReturn(lastFive);
+
+        InsuranceStatusResponse status = insuranceService.getStatus(1L);
+
+        assertFalse(status.insured());
+        YearMonth sixBack = YearMonth.now().minusMonths(6);
+        assertEquals(2, status.unpaidMonths().size());
+        assertEquals(sixBack.getMonthValue(), status.unpaidMonths().get(0).month(), "the month that breaks the run");
+        assertEquals(YearMonth.now().getMonthValue(), status.unpaidMonths().get(1).month(), "the current month");
     }
 
     @Test
@@ -244,7 +264,7 @@ class InsuranceServiceTest {
         assertFalse(rows.get(1).insured());
         assertEquals("7504221485", rows.get(1).egn());
         // Never paid, so every month in the window is owed - and named, not just counted.
-        assertEquals(6, rows.get(1).unpaidMonths().size());
+        assertEquals(7, rows.get(1).unpaidMonths().size());
         assertTrue(rows.get(0).unpaidMonths().isEmpty(), "fully covered patients owe nothing");
     }
 

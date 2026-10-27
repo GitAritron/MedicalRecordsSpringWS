@@ -47,11 +47,8 @@ public class InsuranceService {
     // Counts the unbroken run of paid months ending at the current (or previous) month.
     // Current month is not required yet - like a monthly bill, it's owed by the end of the month.
     private long consecutiveMonths(Set<Integer> coveredMonthKeys, LocalDate today) {
-        YearMonth current = YearMonth.from(today);
-        YearMonth anchor = coveredMonthKeys.contains(key(current)) ? current : current.minusMonths(1);
-
         long run = 0;
-        YearMonth month = anchor;
+        YearMonth month = anchor(coveredMonthKeys, YearMonth.from(today));
         while (run < REQUIRED_MONTHS && coveredMonthKeys.contains(key(month))) {
             run++;
             month = month.minusMonths(1);
@@ -62,14 +59,21 @@ public class InsuranceService {
     // Specific months with no payment. Can be BOTH insured AND owing the current month.
     private List<ReportDTO.UnpaidMonth> unpaidMonths(Set<Integer> coveredMonthKeys, LocalDate today) {
         List<ReportDTO.UnpaidMonth> unpaid = new ArrayList<>();
-        YearMonth month = YearMonth.from(today).minusMonths(REQUIRED_MONTHS - 1L);
-        for (int i = 0; i < REQUIRED_MONTHS; i++) {
+        YearMonth current = YearMonth.from(today);
+        // Starts where the verdict's window starts, so the month that breaks the run is always named.
+        YearMonth month = anchor(coveredMonthKeys, current).minusMonths(REQUIRED_MONTHS - 1L);
+        while (!month.isAfter(current)) {
             if (!coveredMonthKeys.contains(key(month))) {
                 unpaid.add(new ReportDTO.UnpaidMonth(month.getYear(), month.getMonthValue()));
             }
             month = month.plusMonths(1);
         }
         return unpaid;
+    }
+
+    // The run ends at the current month if it is paid, otherwise at the previous one.
+    private static YearMonth anchor(Set<Integer> coveredMonthKeys, YearMonth current) {
+        return coveredMonthKeys.contains(key(current)) ? current : current.minusMonths(1);
     }
 
     // Sortable month identity (same as in repository)

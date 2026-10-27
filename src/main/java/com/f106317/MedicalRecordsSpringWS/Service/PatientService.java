@@ -4,6 +4,7 @@ import com.f106317.MedicalRecordsSpringWS.Data.Entity.Patient;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientSelfRegistrationRequest;
+import com.f106317.MedicalRecordsSpringWS.Exception.ConflictException;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.PatientRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
@@ -53,8 +54,17 @@ public class PatientService {
         return PatientResponse.fromEntity(patient);
     }
 
+    // Names the EGN instead of letting the unique constraint answer with a generic conflict.
+    @Transactional(readOnly = true)
+    public void requireEgnAvailable(String egn) {
+        if (patientRepository.existsByEgn(egn)) {
+            throw new ConflictException("A patient with EGN " + egn + " already exists");
+        }
+    }
+
     @Transactional
     public PatientResponse createPatient(PatientRequest request, Authentication authentication) {
+        requireEgnAvailable(request.egn());
         Patient patient = new Patient();
         patient.setEgn(request.egn());
         patient.setFirstName(request.firstName());

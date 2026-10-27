@@ -60,6 +60,7 @@ class RepositoryQueryTest {
     @Autowired private SickLeaveRepository sickLeaveRepository;
     @Autowired private PaidInsuranceRepository paidInsuranceRepository;
     @Autowired private AuditLogRepository auditLogRepository;
+    @Autowired private SpecializationRepository specializationRepository;
 
     private Doctor house;   // GP, 2 visits, 2 specializations
     private Doctor wilson;  // GP, 2 visits, 1 specialization
@@ -133,7 +134,7 @@ class RepositoryQueryTest {
         // Diagnoses and prescriptions are fetched together, so both must be Sets - two Lists throw MultipleBagFetchException.
         @Test
         void findAllFetchesTwoCollectionsWithoutMultipleBagFetch() {
-            List<Visit> visits = assertDoesNotThrow(() -> visitRepository.findAll());
+            List<Visit> visits = assertDoesNotThrow(() -> visitRepository.findAllByOrderByVisitDateDescVisitTimeDesc());
             assertEquals(4, visits.size());
 
             Visit loaded = visits.stream()
@@ -152,7 +153,7 @@ class RepositoryQueryTest {
 
         @Test
         void findByPatientIdAppliesTheSameFetchPlan() {
-            List<Visit> visits = assertDoesNotThrow(() -> visitRepository.findByPatientId(ivan.getId()));
+            List<Visit> visits = assertDoesNotThrow(() -> visitRepository.findByPatientIdOrderByVisitDateDescVisitTimeDesc(ivan.getId()));
             assertEquals(2, visits.size());
             visits.forEach(v -> {
                 assertTrue(Hibernate.isInitialized(v.getDiagnoses()));
@@ -197,6 +198,15 @@ class RepositoryQueryTest {
             List<Visit> march = visitRepository.findVisitsInPeriod(
                     LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 31));
             assertEquals(2, march.size());
+        }
+
+        // Visits are inserted out of date order; two share 10.03 at different times.
+        @Test
+        void visitListsAreNewestFirst() {
+            assertEquals(List.of(juneIvan.getId(), marchMaria.getId(), marchIvan.getId(), januaryPetar.getId()),
+                    visitRepository.findAllByOrderByVisitDateDescVisitTimeDesc().stream().map(Visit::getId).toList());
+            assertEquals(List.of(juneIvan.getId(), marchIvan.getId()),
+                    visitRepository.findByPatientIdOrderByVisitDateDescVisitTimeDesc(ivan.getId()).stream().map(Visit::getId).toList());
         }
 
         @Test
@@ -378,6 +388,20 @@ class RepositoryQueryTest {
                     .findFirst()
                     .orElseThrow();
             assertEquals(2, loadedHouse.getSpecializations().size());
+        }
+
+        @Test
+        void specializationNameCheckIgnoresCase() {
+            assertTrue(specializationRepository.existsByNameIgnoreCase("cardiology"));
+            assertFalse(specializationRepository.existsByNameIgnoreCase("Dermatology"));
+        }
+
+        @Test
+        void specializationNameCheckCanExcludeTheOneBeingRenamed() {
+            Long cardiologyId = specializationRepository.findAll().stream()
+                    .filter(s -> s.getName().equals("Cardiology")).findFirst().orElseThrow().getId();
+            assertFalse(specializationRepository.existsByNameIgnoreCaseAndIdNot("CARDIOLOGY", cardiologyId));
+            assertTrue(specializationRepository.existsByNameIgnoreCaseAndIdNot("Neurology", cardiologyId));
         }
 
         @Test

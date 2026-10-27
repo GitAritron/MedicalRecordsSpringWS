@@ -18,24 +18,15 @@
          th:data-keycloak-client-id="${keycloakClientId}">
         <header>
             <div class="logo">MedicalRecords</div>
-            <!--
-              Signed in only. The Login and Register buttons that used to sit here appeared under
-              exactly the same condition as the landing page's own Sign in and Create an account —
-              never independently — so they were a duplicate pair competing with the real call to
-              action, and the header does not stick, so they did not survive scrolling either.
-            -->
+            <!-- Signed in only - the landing page has its own Sign in and Create an account, so the header doesn't repeat them. -->
             <div class="user-info" id="userInfo" style="display: none;">
                 <span id="username" class="role-badge">Not logged in</span>
                 <button id="logoutBtn" class="btn btn-secondary" onclick="logout()">Logout</button>
             </div>
         </header>
         <main>
-            <!--
-              The signed-out landing page. Deliberately a page rather than an immediate redirect to
-              Keycloak: with onLoad 'login-required' nobody could ever reach the application's own
-              front page, and signing out would bounce straight back into the login screen. Sign in
-              is one click from here, and the role summaries say what the system does.
-            -->
+            <!-- Signed-out landing page rather than a redirect to Keycloak - otherwise the front page is unreachable
+                 and signing out bounces straight back to the login screen. -->
             <section id="hero" class="glass-panel">
                 <h1>Medical Records</h1>
                 <div class="hero-actions">
@@ -48,7 +39,7 @@
                 <div class="dashboard-header">
                     <h2>Dashboard</h2>
                     <div class="filter-bar">
-                        <input type="text" id="searchInput" class="search-input" placeholder="Search / Filter..." onkeyup="filterTable()">
+                        <input type="text" id="searchInput" class="search-input" placeholder="Search / Filter..." oninput="filterTable()">
                     </div>
                     <div id="nav-tabs" class="tabs">
                         <!-- Tabs will be injected here by JS -->
@@ -88,11 +79,8 @@
                     </div>
                 </div>
 
-                <!--
-                  Portal access is optional on purpose: a patient who never uses the portal still
-                  needs their visits recorded, so a blank username records them with no account.
-                  Filling one in creates the Keycloak account and returns a one-time password.
-                -->
+                <!-- Portal access is optional: a blank username records the patient with no account, a username
+                     creates the Keycloak account and returns a one-time password. -->
                 <fieldset class="account-fieldset">
                     <legend>Portal access</legend>
                     <p class="field-hint">Leave blank for a records-only patient. Fill in a username to create an account for them.</p>
@@ -106,7 +94,7 @@
                         <small class="field-hint">Prefilled when this record is linked. Clear it to unlink.</small>
                     </div>
                     <p id="patientAccountNote" class="field-hint account-note" style="display: none;">
-                        Already linked to an account — use <strong>Re-issue password</strong> below, or clear the UUID to create a new account instead.
+                        Already linked to an account - use <strong>Re-issue password</strong> below, or clear the UUID to create a new account instead.
                     </p>
                     <div id="patientAccountActions" style="display: none;">
                         <button type="button" class="btn btn-secondary" onclick="reissuePassword('patients', 'patientId')">Re-issue password</button>
@@ -136,7 +124,7 @@
                 </div>
                 <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
                     <label style="margin-bottom: 0;" for="doctorIsGp">Is General Practitioner (GP)?:</label>
-                    <input type="checkbox" id="doctorIsGp" style="width: auto;">
+                    <input type="checkbox" id="doctorIsGp">
                 </div>
                 <div class="form-group">
                     <span class="group-label">Specializations:</span>
@@ -159,7 +147,7 @@
                         <small class="field-hint">Prefilled when this record is linked. Clear it to unlink.</small>
                     </div>
                     <p id="doctorAccountNote" class="field-hint account-note" style="display: none;">
-                        Already linked to an account — use <strong>Re-issue password</strong> below, or clear the UUID to create a new account instead.
+                        Already linked to an account - use <strong>Re-issue password</strong> below, or clear the UUID to create a new account instead.
                     </p>
                     <div id="doctorAccountActions" style="display: none;">
                         <button type="button" class="btn btn-secondary" onclick="reissuePassword('doctors', 'doctorId')">Re-issue password</button>
@@ -220,12 +208,7 @@
                 </div>
             </form>
 
-            <!--
-              Read-only recap of the saved visit. The form above is replaced rather than kept
-              editable because a diagnosis cannot be attached until the visit exists, so the two
-              steps are genuinely sequential — but hiding the fields outright left the user adding
-              clinical data with no reminder of whose visit they were annotating.
-            -->
+            <!-- Read-only recap of the saved visit, so whose visit it is stays on screen while clinical data is added. -->
             <div id="visitSummary" style="display: none; background: rgba(56, 189, 248, 0.08); border: 1px solid #1E3A5F; border-radius: 8px; padding: 0.75rem 1rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
                     <div id="visitSummaryText" style="color: #E2E8F0; font-size: 0.9rem;"></div>
@@ -242,7 +225,13 @@
                     <label style="color: #94A3B8; font-weight: 600; font-size: 0.88rem;" for="newDiagnosisName">Diagnoses:</label>
                     <div id="diagnosisList" style="margin: 0.5rem 0;"></div>
                     <div style="display: flex; gap: 0.5rem;">
-                        <input type="text" id="newDiagnosisName" placeholder="Enter diagnosis name..." style="flex: 1;">
+                        <!-- Suggests names already in use, so one condition isn't counted under two spellings in the reports. -->
+                        <div class="suggest-wrap">
+                            <input type="text" id="newDiagnosisName" placeholder="Enter diagnosis name..." autocomplete="off"
+                                   oninput="showSuggestions(this)" onblur="hideSuggestions(this)"
+                                   onkeydown="if (!handleSuggestionKey(event) && event.key === 'Enter') addDiagnosisToVisit()">
+                            <div class="suggestions" onmousedown="pickSuggestion(event)"></div>
+                        </div>
                         <button type="button" class="btn btn-primary" style="padding: 0.4rem 1rem; white-space: nowrap;" onclick="addDiagnosisToVisit()">+ Add</button>
                     </div>
                 </div>
@@ -252,7 +241,7 @@
                     <label style="color: #94A3B8; font-weight: 600; font-size: 0.88rem;" for="newPrescriptionNote">Prescriptions:</label>
                     <div id="prescriptionList" style="margin: 0.5rem 0;"></div>
                     <div style="display: flex; gap: 0.5rem;">
-                        <input type="text" id="newPrescriptionNote" placeholder="Enter prescription..." style="flex: 1;">
+                        <input type="text" id="newPrescriptionNote" placeholder="Enter prescription..." style="flex: 1;" onkeydown="if (event.key === 'Enter') addPrescriptionToVisit()">
                         <button type="button" class="btn btn-primary" style="padding: 0.4rem 1rem; white-space: nowrap;" onclick="addPrescriptionToVisit()">+ Add</button>
                     </div>
                 </div>
@@ -276,7 +265,7 @@
                 </div>
 
                 <div class="modal-actions" style="margin-top: 1rem;">
-                    <button type="button" class="btn btn-primary" onclick="finishVisit()" style="width: 100%;">Done — Close</button>
+                    <button type="button" class="btn btn-primary" onclick="finishVisit()" style="width: 100%;">Done - Close</button>
                 </div>
             </div>
         </dialog>
@@ -324,11 +313,8 @@
             </form>
         </dialog>
 
-        <!--
-          Shown once, immediately after an account is created or its password re-issued. The value
-          is never stored anywhere, so this dialog is the only place it appears — if it is lost,
-          the administrator re-issues rather than looking it up.
-        -->
+        <!-- Shown once, after an account is created or its password re-issued. The password is never stored,
+             so if it's lost the administrator re-issues it. -->
         <dialog id="credentialsModal" class="crud-modal">
             <h3>Account ready</h3>
             <p class="field-hint">

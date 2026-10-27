@@ -27,8 +27,8 @@ with a browser front end and Keycloak for user management.
 docker compose up -d
 ```
 
-This command starts MySQL on `3306` and Keycloak on `8081`. MySQL runs `db/init.sql` then `db/test-data.sql`
-on first start, and Keycloak imports `realm-export.json` (if absent). Wait for both to report healthy:
+This command starts MySQL on `3306` and Keycloak on `8081`. MySQL runs `seed/00-keycloak-db.sql`, `seed/init.sql`
+and `seed/test-data.sql` on first start, and Keycloak imports `seed/realm-export.json` (if absent). Wait for both to report healthy:
 
 ```bash
 docker compose ps
@@ -40,7 +40,7 @@ Then start the application:
 ./gradlew bootRun
 ```
 
-Open **http://localhost:8080** and press *Login*.
+Open **http://localhost:8080** and press *Sign in*.
 
 Both the medical records and Keycloak's own data live in the MySQL container, in separate schemas
 (`medical_records_db` and `keycloak`). Accounts created at runtime therefore survive
@@ -61,7 +61,7 @@ docker compose down -v && docker compose up -d
 ### Schema notes
 
 `spring.jpa.hibernate.ddl-auto` is `validate`, not `update`. The schema is owned by
-`src/main/resources/db/init.sql`; Hibernate only checks that the entities match it. If you change an
+`seed/init.sql`; Hibernate only checks that the entities match it. If you change an
 entity, change the DDL too, or the application will refuse to start - which is the intended
 behaviour, since a silently altered production schema is worse than a failed boot.
 
@@ -81,7 +81,8 @@ Seeded by `realm-export.json`. Passwords match the role name.
 
 Self-registration is open: sign up through Keycloak, then the application asks whether you are a
 patient or a doctor. Patients are activated immediately; doctors wait for an administrator to
-approve them from the **Reports** tab.
+approve them from the **Reports** banner or the **Doctors** list. The banner can also delete an
+application; the applicant's account stays, so they can apply again.
 
 Sign-in uses the authorization code flow with **PKCE** (`S256`). `frontend-client` is a public
 client, so it has no secret and the token endpoint would otherwise exchange an authorization code
@@ -149,13 +150,13 @@ Report **f** includes sick leave alongside diagnosis and treatment, covering *"�
 
 **Beyond the ten:** an **Unpaid Months per Patient** report
 (`GET /api/reports/patients/insurance`) - the *справка* §1 requires of patient records. It names
-*which* of the last six months each patient still owes, listing only those who owe something.
+*which* months each patient still owes for the six-month check, listing only those who owe something.
 "You are three months short" does not tell a patient what to pay; the months do.
 
 The patient's own dashboard shows the same check for themselves, and both patient lists carry the
 verdict as a column, so staff see it without opening anything.
 
-**No month count is reported anywhere.** The rule works on an unbroken run, and a run understates a
+**No run length is reported anywhere.** The rule works on an unbroken run, and a run understates a
 patient who paid on either side of a gap - four of six months paid with a hole in the middle scores
 one, which reads far worse than their position is. That number needs explaining wherever it appears,
 so the verdict decides the question and the months say what is outstanding.
@@ -167,14 +168,18 @@ month very nearly is. A count of "three" describes both.
 
 The run is anchored at the current month when it has been paid and at the previous one when it has
 not - **the current month is not over, so an unpaid one is not yet a lapse**, exactly as this
-month's bill is not yet overdue. Paying simply keeps the run going.
+month's bill is not yet overdue. Paying simply keeps the run going. Until then it is still listed,
+marked *due by month end*.
+
+The months listed are the ones inside the window the verdict checks, so the month that breaks the run
+is always among them.
 
 Every report exports to CSV from the button above the results table.
 
 ### §4 - Technology
 
 REST services, MySQL, a user interface, Bean Validation on every request DTO, a
-`@ControllerAdvice` exception handler, 292 automated tests, and Keycloak for user management.
+`@ControllerAdvice` exception handler, 387 automated tests, and Keycloak for user management.
 
 ---
 
@@ -190,7 +195,7 @@ boundary. Entities never leave the service layer; every response record has a `f
 
 A patient cannot reach another patient's record by guessing an id, and a doctor cannot annotate a
 colleague's visit, because the second check re-reads the record and compares it against the token
-subject. `EndpointAuthorizationMatrixTest` covers the first plane across 100 cases.
+subject. `EndpointAuthorizationMatrixTest` covers the first plane across 108 cases.
 
 **`Visit` is the aggregate root** of the clinical record. Diagnoses, prescriptions and the sick leave
 cascade from it, which is why authorization for all of them delegates to the visit's doctor - one
@@ -286,7 +291,7 @@ the patient's dashboard in amber with a *Choose GP* action, rather than blocking
 **Deleting a doctor with recorded visits is refused.** `visit.doctor_id` is `ON DELETE CASCADE`, so
 removing such a doctor would take their visits - and the diagnoses, prescriptions and sick leaves
 below them - with it. That would erase patient history as a side effect of a staff change, so the
-application refuses instead.
+application refuses instead, with a **409** that says how many visits stand in the way.
 
 **EGN is immutable** after creation, and unique. A self-registration whose EGN an administrator has
 already recorded is told to ask for the existing record to be linked, rather than being handed a bare
@@ -301,7 +306,8 @@ must not be able to leave a real account created or a live user de-roled.
 - **A failed record save can strand a Keycloak account.** Provisioning creates the account before the
   record, so that a Keycloak failure stops the write rather than reporting an account that does not
   exist. If the database save then fails, the account remains - but with no role, since the grant
-  happens afterwards, so it is inert. Deleting it is a manual step in the Keycloak console. The
+  happens afterwards, so it is inert. A duplicate EGN, the likeliest cause, is checked before the
+  account is created, so it never gets that far. Deleting it is a manual step in the Keycloak console. The
   alternative, a compensating delete, adds rollback machinery for a benign outcome.
 - **Keycloak admin calls use the master-realm administrator credentials** via a password grant. That
   is adequate for a local teaching deployment; a real one would use a dedicated service account with
@@ -310,7 +316,7 @@ must not be able to leave a real account created or a live user de-roled.
   from the Keycloak server itself, so there is no offline error page.
 - **Self-registering doctors cannot pick specializations.** The specialization endpoint requires a
   role, which an applicant does not yet hold; an administrator adds them on approval - **Approve**
-  offers the edit form straight afterwards for exactly that. Saving a pending applicant from that
+  opens the edit form straight afterwards for exactly that. Saving a pending applicant from that
   form also approves them, because the save grants the DOCTOR role; the approval is recorded either
   way, so the pending banner clears.
 - **Approval has no column of its own.** A doctor is pending when the audit log holds a
@@ -328,12 +334,12 @@ must not be able to leave a real account created or a live user de-roled.
 ./gradlew test
 ```
 
-377 tests, no Docker required - the suite runs against H2 with a mocked identity provider. A JaCoCo
+387 tests, no Docker required - the suite runs against H2 with a mocked identity provider. A JaCoCo
 report is written to `build/reports/jacoco/test/html/index.html`.
 
 | Suite | Covers |
 |---|---|
-| `EndpointAuthorizationMatrixTest` | All 100 role/endpoint combinations against the real `SecurityConfig` |
+| `EndpointAuthorizationMatrixTest` | All 108 role/endpoint combinations against the real `SecurityConfig` |
 | `AuthorizationServiceTest` | The ownership rules of §2 |
 | `AccountProvisioningServiceTest` | When an account is created, and what happens to the role when it is not |
 | `VisitServiceTest` | The clinical workflow and its business rules |

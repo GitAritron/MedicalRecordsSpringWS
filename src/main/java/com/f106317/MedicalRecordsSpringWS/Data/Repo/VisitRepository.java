@@ -11,11 +11,12 @@ import java.util.List;
 
 @Repository
 public interface VisitRepository extends JpaRepository<Visit, Long> {
+    // Newest first - without an ORDER BY the database returns rows in no guaranteed order.
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"patient", "doctor", "diagnoses", "prescriptions", "sickLeave"})
-    List<Visit> findAll();
+    List<Visit> findAllByOrderByVisitDateDescVisitTimeDesc();
 
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"patient", "doctor", "diagnoses", "prescriptions", "sickLeave"})
-    List<Visit> findByPatientId(Long patientId);
+    List<Visit> findByPatientIdOrderByVisitDateDescVisitTimeDesc(Long patientId);
 
     // Used to refuse deleting a doctor who has visits.
     long countByDoctorId(Long doctorId);

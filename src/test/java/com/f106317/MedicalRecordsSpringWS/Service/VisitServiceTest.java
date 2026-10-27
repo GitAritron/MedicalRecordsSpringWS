@@ -77,7 +77,7 @@ class VisitServiceTest {
 
     @Test
     void getAllVisits() {
-        when(visitRepository.findAll()).thenReturn(Arrays.asList(visit));
+        when(visitRepository.findAllByOrderByVisitDateDescVisitTimeDesc()).thenReturn(Arrays.asList(visit));
         assertEquals(1, visitService.getAllVisits().size());
     }
 
@@ -138,7 +138,7 @@ class VisitServiceTest {
     @Test
     void getVisitsByPatient() {
         when(patientRepository.findById(1L)).thenReturn(Optional.of(patient));
-        when(visitRepository.findByPatientId(1L)).thenReturn(Arrays.asList(visit));
+        when(visitRepository.findByPatientIdOrderByVisitDateDescVisitTimeDesc(1L)).thenReturn(Arrays.asList(visit));
         assertEquals(1, visitService.getVisitsByPatient(1L, TestAuth.admin()).size());
     }
 

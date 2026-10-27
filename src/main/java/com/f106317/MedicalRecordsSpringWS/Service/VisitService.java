@@ -51,7 +51,7 @@ public class VisitService {
 
     @Transactional(readOnly = true)
     public List<VisitResponse> getAllVisits() {
-        return visitRepository.findAll().stream()
+        return visitRepository.findAllByOrderByVisitDateDescVisitTimeDesc().stream()
                 .map(VisitResponse::fromEntity)
                 .toList();
     }
@@ -158,7 +158,7 @@ public class VisitService {
         Patient patient = patientRepository.findById(patientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Patient not found with id: " + patientId));
         authorizationService.assertPatientCanAccessPatient(authentication, patient);
-        return visitRepository.findByPatientId(patientId).stream()
+        return visitRepository.findByPatientIdOrderByVisitDateDescVisitTimeDesc(patientId).stream()
                 .map(VisitResponse::fromEntity)
                 .toList();
     }

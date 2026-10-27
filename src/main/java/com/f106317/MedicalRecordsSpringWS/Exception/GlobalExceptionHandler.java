@@ -92,6 +92,18 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(apiError, HttpStatus.CONFLICT);
     }
 
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ApiError> handleConflict(ConflictException ex, HttpServletRequest request) {
+        ApiError apiError = new ApiError(
+                "CONFLICT",
+                ex.getMessage(),
+                request.getRequestURI(),
+                Instant.now(),
+                Map.of()
+        );
+        return new ResponseEntity<>(apiError, HttpStatus.CONFLICT);
+    }
+
     // 502: Keycloak is down, not our bug. The clinical record itself is fine.
     @ExceptionHandler(KeycloakIntegrationException.class)
     public ResponseEntity<ApiError> handleKeycloakIntegrationFailure(KeycloakIntegrationException ex,

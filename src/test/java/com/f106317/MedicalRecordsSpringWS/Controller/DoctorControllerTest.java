@@ -108,4 +108,16 @@ class DoctorControllerTest {
         mockMvc.perform(delete("/api/doctors/1").with(csrf()))
                 .andExpect(status().isNoContent());
     }
+
+    // The request is fine, the doctor's visits should be 409, not 400.
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void deleteDoctor_withVisits_isAConflict() throws Exception {
+        org.mockito.Mockito.doThrow(new com.f106317.MedicalRecordsSpringWS.Exception.ConflictException("Dr. John Doe has 3 recorded visit(s)"))
+                .when(doctorService).deleteDoctor(eq(1L), any());
+
+        mockMvc.perform(delete("/api/doctors/1").with(csrf()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Dr. John Doe has 3 recorded visit(s)"));
+    }
 }

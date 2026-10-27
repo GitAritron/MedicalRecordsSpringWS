@@ -9,6 +9,7 @@ import com.f106317.MedicalRecordsSpringWS.DTO.PendingDoctorResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.SpecializationRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.SpecializationResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.ReportDTO;
+import com.f106317.MedicalRecordsSpringWS.Exception.ConflictException;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.SpecializationRepository;
@@ -158,7 +159,7 @@ public class DoctorService {
         Doctor doctor = findDoctorById(id);
         long recordedVisits = visitRepository.countByDoctorId(id);
         if (recordedVisits > 0) {
-            throw new IllegalArgumentException(
+            throw new ConflictException(
                     "Dr. " + doctor.getFirstName() + " " + doctor.getLastName() + " has "
                     + recordedVisits + " recorded visit(s) and cannot be deleted, because that "
                     + "would erase those patients' medical history");
@@ -204,8 +205,12 @@ public class DoctorService {
     @Transactional
     public SpecializationResponse createSpecialization(SpecializationRequest request,
                                                        Authentication authentication) {
+        String name = request.name().trim();
+        if (specializationRepository.existsByNameIgnoreCase(name)) {
+            throw new ConflictException("A specialization named \"" + name + "\" already exists");
+        }
         Specialization spec = new Specialization();
-        spec.setName(request.name().trim());
+        spec.setName(name);
         Specialization saved = specializationRepository.save(spec);
         auditLogService.log(authentication, "CREATE", "Specialization", saved.getId(), saved.getName());
         return SpecializationResponse.fromEntity(saved);
@@ -215,7 +220,11 @@ public class DoctorService {
     public SpecializationResponse updateSpecialization(Long id, SpecializationRequest request,
                                                        Authentication authentication) {
         Specialization spec = findSpecializationById(id);
-        spec.setName(request.name().trim());
+        String name = request.name().trim();
+        if (specializationRepository.existsByNameIgnoreCaseAndIdNot(name, id)) {
+            throw new ConflictException("A specialization named \"" + name + "\" already exists");
+        }
+        spec.setName(name);
         Specialization saved = specializationRepository.save(spec);
         auditLogService.log(authentication, "UPDATE", "Specialization", saved.getId(), saved.getName());
         return SpecializationResponse.fromEntity(saved);

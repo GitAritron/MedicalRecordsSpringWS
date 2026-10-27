@@ -259,12 +259,7 @@ h4 {
 }
 
 /* Modal Styling */
-/*
- * The modal follows the application's dark theme. It used to be near-white, which left every
- * control inside it unreadable: the shared .btn-secondary (Cancel) is near-white text on a
- * transparent background, and the clinical-data section is written with dark-theme colours
- * (#E2E8F0 text, #334155 dividers) — all of which vanished against a white surface.
- */
+/* Dark like the rest of the app - Cancel and the clinical-data text are light colours that vanish on white. */
 .crud-modal {
     border: 1px solid var(--glass-border);
     border-radius: 12px;
@@ -276,15 +271,8 @@ h4 {
        the patient and doctor forms onto one screen at a normal window height. */
     width: 620px;
     max-width: 92%;
-    /*
-     * Centred by `inset: 0` plus `margin: auto`, and NOT by the top/left/transform idiom.
-     * WHY: the UA stylesheet already gives dialog:modal `inset: 0`. Setting only top and left
-     * leaves `bottom: 0` in place, so `margin: auto` centres the box inside the band between
-     * top:50% and the viewport foot — resolving to a negative margin-top for any dialog taller
-     * than that band — and the transform then centres it a second time. A tall dialog was landing
-     * ~106px above the viewport on a 706px-high window, unreachable and unscrollable.
-     * Letting the browser solve the centring against all four insets cannot overflow the top.
-     */
+    /* Centred by inset: 0 + margin: auto, NOT top/left/transform - that put tall dialogs above the
+       viewport, unreachable. Centring against all four insets can't overflow the top. */
     position: fixed;
     inset: 0;
     margin: auto;
@@ -317,11 +305,7 @@ h4 {
     margin-bottom: 16px;
 }
 
-/*
- * .form-group is used both inside modals and in the self-registration forms rendered onto the
- * dark dashboard, so these need to read on a dark surface in both places. The previous
- * #4b5563 label was dark grey on dark slate in the registration forms.
- */
+/* Used in modals and in the registration forms on the dashboard, so it has to read on dark in both. */
 /* A <label> must reference one control; headings for a group of controls use .group-label. */
 .form-group label, .form-group .group-label {
     display: block;
@@ -376,12 +360,8 @@ h4 {
     margin-right: 0;
 }
 
-/*
- * Keep a row's controls on one line.
- * WHY :has() rather than a class: the buttons are written inline at a dozen call sites with no
- * wrapper to hook, and targeting td:last-child would also stop wrapping in tables whose final
- * column is ordinary text. This matches only cells that actually contain controls.
- */
+/* Keeps a row's buttons on one line. :has() because they have no wrapper, and td:last-child would also
+   hit tables whose last column is text. */
 .data-table td:has(> .action-btn) {
     white-space: nowrap;
 }
@@ -391,6 +371,8 @@ h4 {
 .btn-view      { background-color: #0284c7; color: white; }
 .btn-insurance { background-color: #059669; color: white; }
 .btn-approve   { background-color: #10b981; color: white; }
+.btn-save      { background-color: #10b981; color: white; }
+.btn-cancel    { background-color: #475569; color: white; }
 .btn-add-new { margin-bottom: 16px; display: inline-block; }
 
 /* Reports Dashboard Grid - Dark Glassmorphism Aesthetic */
@@ -426,11 +408,7 @@ h4 {
     transition: opacity 0.3s ease;
 }
 
-/*
- * The accent bar carries the report's subject, so the nine cards can be told apart at a glance
- * and related ones read as a set. This replaces the decorative emoji that used to prefix each
- * title — and unlike them it groups the reports rather than merely marking them.
- */
+/* The accent bar colours a card by subject, so related reports read as a set. */
 .report-card[data-group="diagnoses"]::before  { background: linear-gradient(90deg, #38BDF8, #0EA5E9); }
 .report-card[data-group="doctors"]::before    { background: linear-gradient(90deg, #10B981, #059669); }
 .report-card[data-group="sickleaves"]::before { background: linear-gradient(90deg, #F59E0B, #D97706); }
@@ -525,9 +503,44 @@ h4 {
     cursor: pointer;
 }
 
-.checkbox-item input[type="checkbox"] {
-    width: auto !important;
+/* Themed checkbox - the native one is a small grey square on the dark modal. The type selector
+   outranks the generic `.crud-modal input` padding and border. */
+.crud-modal input[type="checkbox"] {
+    appearance: none;
+    flex-shrink: 0;
+    width: 18px !important;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    display: inline-grid;
+    place-content: center;
+    background: #0F172A;
+    border: 1.5px solid #475569;
+    border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.crud-modal input[type="checkbox"]:hover { border-color: #38BDF8; }
+
+.crud-modal input[type="checkbox"]:checked {
+    background: #38BDF8;
+    border-color: #38BDF8;
+}
+
+/* The tick: two borders of a small box, rotated. */
+.crud-modal input[type="checkbox"]:checked::before {
+    content: '';
+    width: 9px;
+    height: 5px;
+    border-left: 2px solid #0F172A;
+    border-bottom: 2px solid #0F172A;
+    transform: translateY(-1px) rotate(-45deg);
+}
+
+.crud-modal input[type="checkbox"]:focus-visible {
+    outline: 2px solid #38BDF8;
+    outline-offset: 2px;
 }
 
 /* Responsive Design */
@@ -600,6 +613,61 @@ h4 {
     cursor: not-allowed;
 }
 
+/* Shown but fixed, like the EGN of an existing patient - dimmer than editable, readable unlike disabled. */
+.crud-modal input[readonly] {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* A text box inside a table row, e.g. renaming a specialization. */
+.inline-input {
+    width: 100%;
+    padding: 4px 8px;
+    background: #0F172A;
+    color: var(--text-color);
+    border: 1px solid #38BDF8;
+    border-radius: 4px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9rem;
+}
+
+.inline-input:focus { outline: none; }
+
+/* Diagnosis suggestions - a themed replacement for the native <datalist> popup. */
+.suggest-wrap {
+    position: relative;
+    flex: 1;
+}
+
+.suggest-wrap input { width: 100%; }
+
+.suggestions {
+    display: none;
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 10;
+    max-height: 13rem;
+    overflow-y: auto;
+    background: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+.suggestion {
+    padding: 6px 12px;
+    color: #E2E8F0;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.suggestion:hover, .suggestion.active {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38BDF8;
+}
+
 /* ── Signed-out landing page ─────────────────────────────────────────────── */
 
 #hero {
@@ -635,10 +703,8 @@ h4 {
     gap: 0 1rem;
 }
 
-/* Scrollbars, themed. The default light-grey bar sat badly against the dark surfaces — most
-   visibly inside a modal, which is the one place scrolling is routine. `scrollbar-color` covers
-   Firefox; the ::-webkit- rules cover Chrome and Edge. The thumb's border is the modal's own
-   background, which reads as padding and keeps the bar clear of the rounded corners. */
+/* Themed scrollbars - scrollbar-color for Firefox, ::-webkit- for Chrome and Edge. The thumb's border
+   is the modal background, so it reads as padding and clears the rounded corners. */
 html {
     scrollbar-width: thin;
     scrollbar-color: #475569 transparent;
@@ -688,9 +754,7 @@ html::-webkit-scrollbar-thumb:hover {
     background: #64748B;
 }
 
-/* 600px, not the 768px used elsewhere: the modal is `min(620px, 92vw)`, so two columns still fit
-   comfortably well below the tablet breakpoint. Collapsing at 768 stacked the fields on windows
-   that had ample room for them. Below ~610px the modal itself is narrow enough to want one. */
+/* 600px, not 768: the modal is min(620px, 92vw), so two columns still fit well below the tablet breakpoint. */
 @media (max-width: 600px) {
     .form-row { grid-template-columns: 1fr; }
 }
@@ -700,12 +764,7 @@ html::-webkit-scrollbar-thumb:hover {
 .report-card[data-group="insurance"]::before   { background: linear-gradient(90deg, #2DD4BF, #0D9488); }
 .report-card[data-group="insurance"] .report-group { color: #2DD4BF; }
 
-/*
- * The dashboard holds data tables, not prose. 800px is a reading width — at seven columns the
- * Visits table simply grew past the panel and its buttons rendered outside the rounded border.
- * A wider panel fits them; overflow-x on the content area catches whatever still does not, so a
- * wide table scrolls inside the panel rather than spilling out of it.
- */
+/* Wide enough for 7-column tables; overflow-x scrolls anything wider inside the panel instead of spilling out. */
 #dashboard {
     /* No reading-width cap: this panel holds tables, and 800px forced a seven-column one past its
        own border. It now fills the window minus main's padding, so the columns simply fit. */
@@ -769,9 +828,7 @@ html::-webkit-scrollbar-thumb:hover {
 .muted       { color: #64748B; }
 .muted-label { color: #94A3B8; }
 
-/* A self-registered doctor nobody has approved yet. They hold no DOCTOR role.
-   Shaped like .role-badge above — same tint, border and radius — only smaller, because this one
-   sits inline beside a name in a table cell rather than standing alone in the header. */
+/* Unapproved applicant (no DOCTOR role yet). Like .role-badge but smaller - it sits inline in a table cell. */
 .pending-badge {
     background: rgba(245, 158, 11, 0.2);
     border: 1px solid #F59E0B;
@@ -790,14 +847,13 @@ html::-webkit-scrollbar-thumb:hover {
     margin: 0 0 0.5rem;
 }
 
-/* Every row tied for the top count. The clauses write "диагнозата/диагнозите" — ties are expected. */
+/* Every row tied for the top count. The clauses write "диагнозата/диагнозите" - ties are expected. */
 .report-top td {
     background: rgba(16, 185, 129, 0.14);
     font-weight: 600;
 }
 
-/* Prev / Next under a paged table. Only the audit log pages — see WebConfig.
-   Sized like the other table-adjacent controls (Export CSV), not like a form's primary button. */
+/* Prev / Next under a paged table (only the audit log pages - see WebConfig). Sized like Export CSV, not a primary button. */
 .pager {
     display: flex;
     align-items: center;
@@ -825,11 +881,8 @@ html::-webkit-scrollbar-thumb:hover {
     font-size: 1rem;
 }
 
-/* Its counterpart, which corrects the same record instead of deleting it.
-   WHY a word and not a pencil glyph: Windows resolves every pencil codepoint (U+270E, U+270F, …)
-   through Segoe UI Emoji, so it renders as a colour emoji beside a monochrome ✕ however the font
-   stack is written. "Edit" is also the word every other row action in the app uses. Amber matches
-   .btn-edit, so the pair reads the same as Edit/Delete elsewhere. */
+/* Its counterpart, which corrects the record. "Edit", not a pencil - Windows draws every pencil as a colour
+   emoji. Amber like .btn-edit, so the pair reads like Edit/Delete elsewhere. */
 .btn-inline-edit {
     background: none;
     border: none;
@@ -842,6 +895,6 @@ html::-webkit-scrollbar-thumb:hover {
 
 .btn-inline-edit:hover { text-decoration: underline; }
 
-/* Verdict text in list cells — green for good standing, red for not. */
+/* Verdict text in list cells - green for good standing, red for not. */
 .status-ok  { color: #10B981; font-weight: 600; }
 .status-bad { color: #EF4444; font-weight: 600; }

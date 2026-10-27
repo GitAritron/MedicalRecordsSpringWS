@@ -56,6 +56,8 @@ public class PatientController {
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<PatientResponse> createPatient(@Valid @RequestBody PatientRequest request, Authentication authentication) {
+        // Before provisioning - a duplicate EGN found after it would leave a Keycloak account behind.
+        patientService.requireEgnAvailable(request.egn());
         var account = accountProvisioning.provisionIfRequested(
                 request.username(), request.firstName(), request.lastName(),
                 null, request.keycloakId());

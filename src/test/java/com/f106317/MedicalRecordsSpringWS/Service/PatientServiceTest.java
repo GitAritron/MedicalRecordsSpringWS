@@ -6,6 +6,7 @@ import com.f106317.MedicalRecordsSpringWS.Data.Entity.Patient;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.PatientSelfRegistrationRequest;
+import com.f106317.MedicalRecordsSpringWS.Exception.ConflictException;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.PatientRepository;
@@ -95,6 +96,18 @@ class PatientServiceTest {
         assertEquals("Petrov", response.lastName());
         assertEquals("8001156240", response.egn());
         assertEquals(1L, response.gpDoctorId());
+    }
+
+    @Test
+    void createPatient_duplicateEgn_namesTheEgnAndSavesNothing() {
+        when(patientRepository.existsByEgn("1234567890")).thenReturn(true);
+        PatientRequest request = new PatientRequest(null, "1234567890", "John", "Doe", 1L, null);
+
+        ConflictException ex = assertThrows(ConflictException.class,
+                () -> patientService.createPatient(request, TestAuth.admin()));
+
+        assertTrue(ex.getMessage().contains("1234567890"));
+        verify(patientRepository, never()).save(any());
     }
 
     @Test

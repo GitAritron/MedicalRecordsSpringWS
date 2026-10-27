@@ -8,4 +8,8 @@ import java.util.Optional;
 
 @Repository
 public interface SpecializationRepository extends JpaRepository<Specialization, Long> {
+    // Case-insensitive, matching MySQL's default collation on the UNIQUE name column.
+    boolean existsByNameIgnoreCase(String name);
+
+    boolean existsByNameIgnoreCaseAndIdNot(String name, Long id);
 }

@@ -9,6 +9,8 @@ import com.f106317.MedicalRecordsSpringWS.DTO.DoctorRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorResponse;
 import com.f106317.MedicalRecordsSpringWS.DTO.DoctorSelfRegistrationRequest;
 import com.f106317.MedicalRecordsSpringWS.DTO.PendingDoctorResponse;
+import com.f106317.MedicalRecordsSpringWS.DTO.SpecializationRequest;
+import com.f106317.MedicalRecordsSpringWS.Exception.ConflictException;
 import com.f106317.MedicalRecordsSpringWS.Exception.ResourceNotFoundException;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.DoctorRepository;
 import com.f106317.MedicalRecordsSpringWS.Data.Repo.SpecializationRepository;
@@ -129,7 +131,7 @@ class DoctorServiceTest {
         when(doctorRepository.findById(1L)).thenReturn(Optional.of(doctor));
         when(visitRepository.countByDoctorId(1L)).thenReturn(3L);
 
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+        ConflictException ex = assertThrows(ConflictException.class,
                 () -> doctorService.deleteDoctor(1L, TestAuth.admin()));
 
         assertTrue(ex.getMessage().contains("3 recorded visit"), ex.getMessage());
@@ -336,6 +338,30 @@ class DoctorServiceTest {
         assertTrue(doctorService.updateDoctor(1L, request, TestAuth.admin()).pending());
         verify(auditLogService, never()).log(any(), eq(AuditLogService.ACTION_APPROVE_DOCTOR),
                 any(), any(), any());
+    }
+
+    @Test
+    void createSpecialization_refusesADuplicateName() {
+        when(specializationRepository.existsByNameIgnoreCase("Cardiology")).thenReturn(true);
+
+        ConflictException ex = assertThrows(ConflictException.class,
+                () -> doctorService.createSpecialization(new SpecializationRequest(" Cardiology "), TestAuth.admin()));
+
+        assertTrue(ex.getMessage().contains("Cardiology"));
+        verify(specializationRepository, never()).save(any());
+    }
+
+    @Test
+    void updateSpecialization_refusesRenamingOntoAnotherOnesName() {
+        Specialization cardiology = new Specialization();
+        cardiology.setId(5L);
+        cardiology.setName("Cardiology");
+        when(specializationRepository.findById(5L)).thenReturn(Optional.of(cardiology));
+        when(specializationRepository.existsByNameIgnoreCaseAndIdNot("Neurology", 5L)).thenReturn(true);
+
+        assertThrows(ConflictException.class,
+                () -> doctorService.updateSpecialization(5L, new SpecializationRequest("Neurology"), TestAuth.admin()));
+        verify(specializationRepository, never()).save(any());
     }
 
     // Removes it from holders instead of refusing - the one to delete is usually a misspelt one already assigned.
